@@ -58,6 +58,7 @@ class ModelEngine:
             stream=True, timeout=(30, 300),
         )
         resp.raise_for_status()
+        resp.encoding = "utf-8"
 
         content = ""
         tool_calls = {}  # index -> dict
@@ -131,6 +132,7 @@ class ModelEngine:
             timeout=(30, 300),
         )
         resp.raise_for_status()
+        resp.encoding = "utf-8"
         data = resp.json()
         msg = data["choices"][0]["message"]
         if on_event and msg.get("content"):

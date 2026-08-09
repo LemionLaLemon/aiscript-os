@@ -157,8 +157,16 @@ class Shell:
                 print("session reset")
                 continue
 
-            out = self.session.user_turn(line, on_event=self._main_event)
-            print(out)
+            streamed = [False]
+
+            def on_event(ev):
+                if ev["type"] == "content":
+                    streamed[0] = True
+                self._main_event(ev)
+
+            out = self.session.user_turn(line, on_event=on_event)
+            if out and not streamed[0]:
+                print(out)
             print()
 
     def _help(self):
