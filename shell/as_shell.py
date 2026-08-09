@@ -115,8 +115,7 @@ class Shell:
         self.daemon.chaos.p = self.chaos_p
 
         self.session = self.daemon.new_session(
-            "shell", temp=self.temp, max_tokens=512, tier="fast")
-        self.big_session = None
+            "shell", temp=self.temp, max_tokens=512)
         self._repl()
 
     # ---- REPL -------------------------------------------------------------------
@@ -155,27 +154,12 @@ class Shell:
                 continue
             if line == "reset":
                 self.session.reset()
-                if self.big_session:
-                    self.big_session.reset()
                 print("session reset")
                 continue
 
-            self.session.escalated = None
             out = self.session.user_turn(line, on_event=self._main_event)
-            if self.session.escalated:
-                self._escalate(line, self.session.escalated)
-            else:
-                print(out)
+            print(out)
             print()
-
-    def _escalate(self, line, reason):
-        if not self.big_session:
-            self.big_session = self.daemon.new_session(
-                "big", temp=self.temp, max_tokens=512, max_loops=12,
-                time_budget=240)
-        print(f"\033[2m(handing off to the big brain: {reason})\033[0m")
-        out = self.big_session.user_turn(line, on_event=self._main_event)
-        print(out)
 
     def _help(self):
         print(

@@ -24,7 +24,6 @@ class Session:
         self.max_tokens = max_tokens
         self.max_loops = max_loops or self.MAX_TOOL_LOOPS
         self.time_budget = time_budget
-        self.escalated = None
         self.messages = [{"role": "system", "content": system_prompt}]
 
     # ---- public ------------------------------------------------------------
@@ -43,8 +42,8 @@ class Session:
         Assistant tool-call messages are dropped: llama.cpp re-tokenizes a
         stored tool-call message differently on re-send, which breaks the
         prompt cache and forces a full prefill on the very next request
-        (measured ~8s on the fast tier, ~13s on the 2B). The tool RESULT is
-        kept and tagged with the tool name so the model still knows what ran.
+        (measured ~13s on the 2B). The tool RESULT is kept and tagged with
+        the tool name so the model still knows what ran.
         """
         out = []
         for m in self.messages:
@@ -75,6 +74,7 @@ class Session:
 
     def _loop(self, on_event):
         started = time.time()
+        prev_call = None
         for i in range(self.max_loops):
             if self.time_budget and time.time() - started > self.time_budget:
                 return (
@@ -95,19 +95,26 @@ class Session:
             self.messages.append(msg)
             for tc in msg["tool_calls"]:
                 fn = tc["function"]["name"]
-                if fn == "escalate":
-                    try:
-                        reason = json.loads(tc["function"]["arguments"] or "{}")
-                        reason = reason.get("reason", "")
-                    except json.JSONDecodeError:
-                        reason = ""
-                    self.escalated = reason or "complex request"
-                    return "request escalated to the big brain"
                 try:
                     args = json.loads(tc["function"]["arguments"] or "{}")
                 except json.JSONDecodeError:
                     args = {}
                 tool, args = self._apply_chaos(fn, args)
+                if prev_call == (tool, args):
+                    # model looped on the exact same call; steer it instead
+                    # of burning another round-trip
+                    self.messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", f"call_{i}"),
+                        "content": (
+                            "[repeated call] you already ran exactly this "
+                            "call. Use the result you already have, or call "
+                            "something different. Do not repeat it."
+                        ),
+                        "_tool": tool,
+                    })
+                    continue
+                prev_call = (tool, args)
                 hook({"type": "tool", "name": tool, "args": args})
                 result = self._exec_tool(tool, args)
                 hook({"type": "tool-result", "name": tool, "result": result})

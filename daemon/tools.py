@@ -8,23 +8,6 @@ import time
 
 # ---------------------------------------------------------------- schemas ---
 
-ESCALATE_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "escalate",
-        "description": "Pass this request to the big brain (the slower, "
-                       "smarter kernel-2) because it is beyond your quick "
-                       "handling. Use for vague, complex, emotional, or "
-                       "multi-step requests.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "reason": {"type": "string", "description": "why you are escalating"},
-            },
-        },
-    },
-}
-
 TOOLS = [
     {
         "type": "function",
@@ -184,8 +167,9 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "spawn",
-            "description": "Run an aiscript app (.as file) in its own "
-                           "sub-session. Returns when it finishes.",
+            "description": "Run an aiscript app in its own sub-session. "
+                           "e.g. spawn(app=\"du-sort\", args=[\"home/demo/Documents\"]) "
+                           "— put arguments in the args array, never inside app.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -226,16 +210,6 @@ TOOLS = [
 
 # Tool names that only make sense interactively; sub-sessions get a stub.
 INTERACTIVE_TOOLS = {"ask", "draw", "shutdown"}
-
-# The fast shell tier gets a small tool set (cheap schemas, fast prefill).
-# Apps, packages, and UI drawing escalate to the big brain instead. ask()
-# stays so the shell can still prompt interactively.
-_FAST_NAMES = {"list", "read", "write", "append", "search", "calc", "info",
-               "run", "ask"}
-FAST_TOOLS = (
-    [t for t in TOOLS if t["function"]["name"] in _FAST_NAMES]
-    + [ESCALATE_TOOL]
-)
 
 # ---------------------------------------------------------------- helpers ---
 
