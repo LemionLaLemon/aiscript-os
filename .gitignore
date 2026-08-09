@@ -1,0 +1,6 @@
+models/*.gguf
+tools/llama.cpp/
+jail/
+__pycache__/
+*.pyc
+.venv/

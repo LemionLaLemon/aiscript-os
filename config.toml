@@ -1,0 +1,34 @@
+# as-os configuration
+
+[llama]
+bin_dir = "tools/llama.cpp/llama-b10333"
+host = "127.0.0.1"
+port = 8080
+model_name = "Qwen3.5-2B-Q4_K_M.gguf"
+model_path = "models/Qwen3.5-2B-Q4_K_M.gguf"
+# alt quality model: "models/Qwen3.5-4B-Q4_K_M.gguf" (slower, ~6.5 tok/s vs ~13)
+context_size = 8192
+threads = 4
+cpu_mask = "0,2,4,6"
+slots = 4
+keep_alive = true
+
+[daemon]
+temp = 0.15
+top_p = 0.9
+max_tokens = 1024
+timeout = 120
+policy = "daemon/policy.md"
+jail = "jail"
+packages_dir = "packages"
+
+[chaos]
+enabled = true
+p = 0.10
+
+[oobe]
+required = true
+marker = "jail/etc/as-os/configured"
+
+[shell]
+prompt = "as# "

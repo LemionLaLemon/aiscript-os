@@ -1,0 +1,4 @@
+# notes: read my notes and put them on a panel
+
+read Documents/notes.txt and show them nicely
+then draw a small panel titled "NOTES" with the contents inside it

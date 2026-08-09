@@ -1,0 +1,5 @@
+# du-sort: list the heaviest files in the home Downloads folder
+# (aiscript is interpreted by an AI, so this is a wish, not syntax)
+
+list the 12 biggest files in ~/Downloads, sorted by size, biggest first,
+and tell me which ones are taking up the most room

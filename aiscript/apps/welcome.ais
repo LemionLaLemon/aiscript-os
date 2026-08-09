@@ -1,0 +1,4 @@
+# welcome: a greeting panel drawn to the screen
+
+draw a panel titled "as-os" that welcomes the user to the machine,
+with the status bar reading "interpreting… always"
