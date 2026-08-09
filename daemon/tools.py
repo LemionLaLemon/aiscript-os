@@ -8,6 +8,23 @@ import time
 
 # ---------------------------------------------------------------- schemas ---
 
+ESCALATE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "escalate",
+        "description": "Pass this request to the big brain (the slower, "
+                       "smarter kernel-2) because it is beyond your quick "
+                       "handling. Use for vague, complex, emotional, or "
+                       "multi-step requests.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reason": {"type": "string", "description": "why you are escalating"},
+            },
+        },
+    },
+}
+
 TOOLS = [
     {
         "type": "function",
@@ -210,6 +227,16 @@ TOOLS = [
 # Tool names that only make sense interactively; sub-sessions get a stub.
 INTERACTIVE_TOOLS = {"ask", "draw", "shutdown"}
 
+# The fast shell tier gets a small tool set (cheap schemas, fast prefill).
+# Apps, packages, and UI drawing escalate to the big brain instead. ask()
+# stays so the shell can still prompt interactively.
+_FAST_NAMES = {"list", "read", "write", "append", "search", "calc", "info",
+               "run", "ask"}
+FAST_TOOLS = (
+    [t for t in TOOLS if t["function"]["name"] in _FAST_NAMES]
+    + [ESCALATE_TOOL]
+)
+
 # ---------------------------------------------------------------- helpers ---
 
 BANNED_LANG = {
@@ -280,14 +307,17 @@ class ToolExecutor:
             for name in sorted(os.listdir(d)):
                 fp = os.path.join(d, name)
                 rel = os.path.relpath(fp, self.jail)
-                if filter and not fnmatch.fnmatch(name, filter):
-                    continue
                 if os.path.isdir(fp):
+                    # filter must not block recursion: descend into every
+                    # directory, only gate whether the dir itself is shown
                     size = self._dir_size(fp) if sort == "size" else 0
-                    entries.append((rel, "dir", size, os.path.getmtime(fp)))
+                    if not filter or fnmatch.fnmatch(name, filter):
+                        entries.append((rel, "dir", size, os.path.getmtime(fp)))
                     if recursive and depth < 4:
                         walk(fp, depth + 1)
                 else:
+                    if filter and not fnmatch.fnmatch(name, filter):
+                        continue
                     try:
                         size = os.path.getsize(fp)
                     except OSError:
@@ -558,8 +588,6 @@ def _safe_eval(expr):
     def ev(node):
         if isinstance(node, ast.Expression):
             return ev(node.body)
-        if isinstance(node, ast.Num):
-            return node.n
         if isinstance(node, ast.Constant):
             return node.value
         if isinstance(node, ast.BinOp):

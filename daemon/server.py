@@ -4,7 +4,8 @@ import time
 from .chaos import Chaos
 from .model import ModelEngine
 from .session import Session
-from .tools import TOOLS, INTERACTIVE_TOOLS, ToolExecutor, ToolRefusal
+from .tools import (TOOLS, FAST_TOOLS, INTERACTIVE_TOOLS, ToolExecutor,
+                    ToolRefusal)
 from . import oobe
 
 
@@ -21,6 +22,10 @@ class Daemon:
         self.chaos = Chaos(enabled=cfg["chaos"]["enabled"],
                            p=cfg["chaos"]["p"])
         self.engine = ModelEngine(self.llama_cfg, self.log)
+        self.fast_cfg = cfg.get("fast")
+        self.fast_engine = (
+            ModelEngine(self.fast_cfg, self.log) if self.fast_cfg else None
+        )
         self.executor = ToolExecutor(cfg)
         self.executor.handlers.update({
             "ask": None,
@@ -64,19 +69,40 @@ class Daemon:
             f"System uptime so far: {self._uptime()}.\n\n" + base
         )
 
+    def fast_system_prompt(self):
+        policy = os.path.join(self.fast_cfg["policy"])
+        with open(policy) as f:
+            base = f.read()
+        user = self.current_user or os.environ.get("USER", "user")
+        return (
+            f"Current user: {user}. Home is /home/{user}.\n"
+            f"System uptime: {self._uptime()}.\n\n" + base
+        )
+
     def new_session(self, name, temp=None, tools=None, system_prompt=None,
-                    max_tokens=None, max_loops=None, time_budget=None):
-        slot = self._slot_counter % int(self.llama_cfg["slots"])
+                    max_tokens=None, max_loops=None, time_budget=None,
+                    tier=None):
+        if tier == "fast" and self.fast_engine:
+            engine = self.fast_engine
+            prompt = system_prompt or self.fast_system_prompt()
+            toolset = tools if tools is not None else FAST_TOOLS
+            nslots = int(self.fast_cfg.get("slots", 1))
+        else:
+            engine = self.engine
+            prompt = system_prompt or self.system_prompt()
+            toolset = tools if tools is not None else TOOLS
+            nslots = int(self.llama_cfg["slots"])
+        slot = self._slot_counter % nslots
         self._slot_counter += 1
         sess = Session(
-            self.engine, self.executor,
-            system_prompt=system_prompt or self.system_prompt(),
+            engine, self.executor,
+            system_prompt=prompt,
             slot=slot,
             temp=temp if temp is not None else float(self.daemon_cfg["temp"]),
             chaos=self.chaos,
             name=name,
             log=self.log,
-            tools=tools,
+            tools=toolset,
             max_tokens=max_tokens,
             max_loops=max_loops,
             time_budget=time_budget,

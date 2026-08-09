@@ -13,6 +13,18 @@ cpu_mask = "0,2,4,6"
 slots = 4
 keep_alive = true
 
+# The fast tier: a tiny model for the shell (simple commands only). It
+# escalates complex requests to the big brain (port 8080).
+[fast]
+host = "127.0.0.1"
+port = 8082
+model_name = "Qwen3.5-0.8B-Q4_K_M.gguf"
+model_path = "models/Qwen3.5-0.8B-Q4_K_M.gguf"
+policy = "daemon/policy_fast.md"
+threads = 4
+cpu_mask = "8,9,10,11"
+slots = 1
+
 [daemon]
 temp = 0.15
 top_p = 0.9

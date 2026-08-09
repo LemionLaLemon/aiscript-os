@@ -24,6 +24,7 @@ class Session:
         self.max_tokens = max_tokens
         self.max_loops = max_loops or self.MAX_TOOL_LOOPS
         self.time_budget = time_budget
+        self.escalated = None
         self.messages = [{"role": "system", "content": system_prompt}]
 
     # ---- public ------------------------------------------------------------
@@ -35,6 +36,29 @@ class Session:
 
     def reset(self):
         self.messages = [{"role": "system", "content": self.system_prompt}]
+
+    def _request_messages(self):
+        """Cache-friendly wire form of the history.
+
+        Assistant tool-call messages are dropped: llama.cpp re-tokenizes a
+        stored tool-call message differently on re-send, which breaks the
+        prompt cache and forces a full prefill on the very next request
+        (measured ~8s on the fast tier, ~13s on the 2B). The tool RESULT is
+        kept and tagged with the tool name so the model still knows what ran.
+        """
+        out = []
+        for m in self.messages:
+            if m["role"] == "assistant" and m.get("tool_calls"):
+                continue
+            if m["role"] == "tool":
+                nm = dict(m)
+                name = m.get("_tool")
+                if name:
+                    nm["content"] = f"[{name}] {nm['content']}"
+                out.append(nm)
+            else:
+                out.append(m)
+        return out
 
     def user_turn(self, text, on_event=None):
         """Run a full agent loop for a user message, streaming events."""
@@ -61,8 +85,8 @@ class Session:
             on_event = on_event or (lambda e: None)
             hook = lambda e: (events.append(e), on_event(e))
             msg = self.engine.chat(
-                self.messages, tools=self.tools, temp=self.temp, slot=self.slot,
-                max_tokens=self.max_tokens, on_event=hook,
+                self._request_messages(), tools=self.tools, temp=self.temp,
+                slot=self.slot, max_tokens=self.max_tokens, on_event=hook,
             )
             if not msg.get("tool_calls"):
                 self.messages.append(msg)
@@ -71,6 +95,14 @@ class Session:
             self.messages.append(msg)
             for tc in msg["tool_calls"]:
                 fn = tc["function"]["name"]
+                if fn == "escalate":
+                    try:
+                        reason = json.loads(tc["function"]["arguments"] or "{}")
+                        reason = reason.get("reason", "")
+                    except json.JSONDecodeError:
+                        reason = ""
+                    self.escalated = reason or "complex request"
+                    return "request escalated to the big brain"
                 try:
                     args = json.loads(tc["function"]["arguments"] or "{}")
                 except json.JSONDecodeError:
@@ -83,6 +115,7 @@ class Session:
                     "role": "tool",
                     "tool_call_id": tc.get("id", f"call_{i}"),
                     "content": result,
+                    "_tool": tool,
                 })
         return "(agent loop ran too long; giving up)"
 

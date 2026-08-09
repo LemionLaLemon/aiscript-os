@@ -22,6 +22,7 @@ exec taskset -c "$MASK" env LD_LIBRARY_PATH="$BIN" "$BIN/llama-server" \
   --parallel "$SLOTS" \
   -ctk q8_0 -ctv q8_0 \
   --cache-prompt --cache-reuse 64 \
+  -rea off \
   --host 127.0.0.1 \
   --port "$PORT" \
   --temp 0.15 \
