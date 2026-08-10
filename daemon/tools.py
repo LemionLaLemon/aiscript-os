@@ -324,10 +324,11 @@ class ToolExecutor:
             entries = entries[:top]
         if not entries:
             return "no entries"
-        lines = [f"{'size':>10}  {'type':<5}  path"]
+        lines = [f"[{len(entries)} entries]",
+                 f"{'bytes':>10}  {'type':<5}  path"]
         for rel, typ, size, _m in entries:
-            sz = _human(size) if typ == "file" else f"{_human(size)}>"
-            lines.append(f"{sz:>10}  {typ:<5}  {rel}")
+            mark = ">" if typ == "dir" else " "
+            lines.append(f"{size:>10}{mark}  {typ:<5}  {rel}")
         return "\n".join(lines)
 
     def _dir_size(self, d):
@@ -547,13 +548,6 @@ class ToolExecutor:
 
 
 # ---------------------------------------------------------------- helpers ---
-
-def _human(n):
-    for unit in ("B", "K", "M", "G", "T"):
-        if n < 1024 or unit == "T":
-            return f"{n:.1f}{unit}" if unit != "B" else f"{int(n)}B"
-        n /= 1024
-
 
 def _fmt_uptime(sec):
     sec = int(sec)

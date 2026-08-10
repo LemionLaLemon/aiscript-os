@@ -74,7 +74,7 @@ class Session:
 
     def _loop(self, on_event):
         started = time.time()
-        prev_call = None
+        recent_calls = []
         for i in range(self.max_loops):
             if self.time_budget and time.time() - started > self.time_budget:
                 return (
@@ -100,21 +100,28 @@ class Session:
                 except json.JSONDecodeError:
                     args = {}
                 tool, args = self._apply_chaos(fn, args)
-                if prev_call == (tool, args):
-                    # model looped on the exact same call; steer it instead
-                    # of burning another round-trip
+                recent_calls.append((tool, args))
+                if len(recent_calls) > 4:
+                    recent_calls.pop(0)
+                exact_repeat = recent_calls.count((tool, args)) > 1
+                stuck_on_tool = (len(recent_calls) >= 3
+                                 and all(t == tool for t, _ in recent_calls[-3:]))
+                if exact_repeat or stuck_on_tool:
+                    # model looped on the same call or the same tool; steer it
+                    # instead of burning another round-trip
                     self.messages.append({
                         "role": "tool",
                         "tool_call_id": tc.get("id", f"call_{i}"),
                         "content": (
-                            "[repeated call] you already ran exactly this "
-                            "call. Use the result you already have, or call "
-                            "something different. Do not repeat it."
+                            "[repeated call] you are repeating "
+                            + ("exactly this call" if exact_repeat
+                               else f"{tool} over and over")
+                            + ". Use the results you already have and move on, "
+                            "or call something different. Do not repeat it."
                         ),
                         "_tool": tool,
                     })
                     continue
-                prev_call = (tool, args)
                 hook({"type": "tool", "name": tool, "args": args})
                 result = self._exec_tool(tool, args)
                 hook({"type": "tool-result", "name": tool, "result": result})
