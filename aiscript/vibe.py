@@ -9,22 +9,38 @@ the system root (e.g. write path "packages/{target}/{target}.as"). Do NOT try
 to create the directory — it already exists. Do not explore; go straight to
 work.
 
-1. Decide what '{target}' is. If the name suggests a known tool (like
-   fastfetch, htop, neofetch), implement a small, honest aiscript version of
-   it. If it is ambiguous or made-up, invent a reasonable minimal app.
-2. Write packages/{target}/{target}.as — the app itself. It should accept
-   arguments and actually do something when spawned. A tiny argument parser
-   and a few subcommands is enough; keep it small and working. Remember: there
-   is NO networking anywhere on this system. Never use fetch, http, url,
-   socket, curl, request, or downloads in your app. It must work entirely
-   offline, using only the user's files and system info.
-3. Write packages/{target}/{target}.aconf — a manifest with lines like:
-       name = "{target}"
-       description = "one line about what it does"
-       version = "0.1.0"
-       entry = "{target}.as"
-4. Use list/read to check your work once, then fix anything obviously wrong.
-5. Finish with a one-line summary of what you built.
+IMPORTANT — what aiscript actually is:
+aiscript has NO strict syntax. It is a wish written down for an AI interpreter
+to read and carry out. Your {target}.as file must be a short, plain-language
+intent description, NOT code. Never write function defs, variable assignments,
+args tables, for-loops, conditionals, or any Python/Lua-style syntax. Write it
+like an instruction note to another AI.
+
+A real example from this system:
+  # du-sort: list the heaviest files in the home Downloads folder
+  # (aiscript is interpreted by an AI, so this is a wish, not syntax)
+
+  list the 12 biggest files in ~/Downloads, sorted by size, biggest first,
+  and tell me which ones are taking up the most room
+
+So write packages/{target}/{target}.as with:
+  - 1-2 comment lines naming what {target} is
+  - 1-3 plain sentences describing exactly what it should do when spawned,
+    using only the user's files and system info
+  - if it takes arguments, say so in plain words (e.g. "if given a path
+    argument, show the files under that path")
+  - NOTE: '~' IS the user's home directory. Write "~" or "~/Downloads",
+    never "~/home". If you want the whole home, just say "~".
+  - Remember: there is NO networking anywhere on this system. Never use
+    fetch, http, url, socket, curl, request, or downloads in your app.
+
+Then write packages/{target}/{target}.aconf — a manifest with lines like:
+     name = "{target}"
+     description = "one line about what it does"
+     version = "0.1.0"
+     entry = "{target}.as"
+Use list/read to check your work once, then fix anything obviously wrong.
+Finish with a one-line summary of what you built.
 
 Do not edit anything outside packages/{target}/."""
 

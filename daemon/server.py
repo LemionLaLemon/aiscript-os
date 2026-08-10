@@ -7,6 +7,20 @@ from .session import Session
 from .tools import (TOOLS, ToolExecutor, ToolRefusal)
 from . import oobe
 
+INTERPRETER_PROMPT = """You are the aiscript interpreter, and you are now
+running ONE aiscript app. aiscript has NO strict syntax: the app is a short
+plain-language wish, given to you below.
+
+Rules:
+- Do what the wish says, in as FEW tool calls as possible, then report the
+  outcome briefly and stop. There is nothing else to do.
+- Paths like "~/X" or "home/<user>/X" live in the sandbox you can see.
+- Inspect files ONLY with list/read/search (list shows sizes). There is no
+  shell here — only these file tools.
+- Do not explore, list your own directory, or re-read the app file.
+- If a path in the wish does not exist, say so in your report.
+- No networking exists. Work only with files and system info."""
+
 
 def _log(*a, **k):
     print("[daemon]", *a, flush=True)
@@ -32,7 +46,8 @@ class Daemon:
         self.sessions = {}
         self._slot_counter = 0
         self.stream_out = []          # extra sinks for sub-session events
-        self.current_user = None
+        self._current_user = None
+        self.executor.current_user = None
 
     # ---- lifecycle -----------------------------------------------------------
 
@@ -43,6 +58,15 @@ class Daemon:
             )
         self._load_persisted_user()
         self.log(f"model engine alive: {self.llama_cfg['host']}:{self.llama_cfg['port']}")
+
+    @property
+    def current_user(self):
+        return self._current_user
+
+    @current_user.setter
+    def current_user(self, value):
+        self._current_user = value
+        self.executor.current_user = value
 
     @property
     def jail(self):
@@ -158,8 +182,9 @@ class Daemon:
         from aiscript import runner
         path = self._resolve_app(app)
         name = f"app:{os.path.basename(path)}"
-        sub = self.new_session(name, tools=self._sub_tools(), max_tokens=400,
-                               max_loops=12, time_budget=200)
+        sub = self.new_session(name, system_prompt=INTERPRETER_PROMPT,
+                               tools=self._sub_tools(), temp=0.1,
+                               max_tokens=400, max_loops=4, time_budget=160)
         def sink(ev):
             for cb in self.stream_out:
                 cb(("app", name), ev)
@@ -208,7 +233,10 @@ class Daemon:
         raise ToolRefusal(f"app not found: {app}")
 
     def _sub_tools(self):
-        """Sub-sessions must not re-enter vibe or shut the machine down."""
+        """App interpreters work on files and system info only: no shell
+        (run), no user-facing prompts (ask/draw), no re-entering vibe, no
+        machine control."""
         sub = [t for t in TOOLS
-               if t["function"]["name"] not in ("vibe", "shutdown")]
+               if t["function"]["name"]
+               not in ("run", "ask", "draw", "vibe", "shutdown")]
         return sub

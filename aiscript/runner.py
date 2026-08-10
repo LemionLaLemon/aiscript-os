@@ -49,12 +49,15 @@ def run_file(session, path, args=None, on_event=None):
         )
 
     args_repr = ", ".join(map(str, args or []))
+    try:
+        rel_path = os.path.relpath(path, session.executor.jail)
+    except ValueError:
+        rel_path = path
     program = (
-        f"--- aiscript program: {path} ---\n"
+        f"--- aiscript app: {rel_path} ---\n"
         f"<arguments: {args_repr or 'none'}>\n"
         f"{src}\n"
-        f"--- end of program ---\n"
-        f"Run this aiscript program now. Use your tools to do what it asks, "
-        f"then report the result briefly. Keep your reply short."
+        f"--- end of app ---\n"
+        f"Carry out that wish now, then report the result briefly."
     )
     return session.continue_turn(program, on_event=on_event)

@@ -229,6 +229,14 @@ BANNED_DESTRUCTIVE = {
     "git clone", "cryptsetup", "dmesg", "insmod", "rmmod",
 }
 
+# File inspection belongs to the list/read/search tools, never the shell.
+BANNED_SHELL_UTILS = {
+    "ls", "dir", "cat", "tac", "head", "tail", "less", "more", "sort",
+    "grep", "egrep", "fgrep", "rg", "find", "du", "df", "stat", "wc",
+    "cut", "awk", "sed", "tr", "echo", "basename", "dirname", "xargs",
+    "uniq", "fold", "nl", "od", "hexdump", "file", "which", "type",
+}
+
 BANNED_FILE_EXT = {
     ".py", ".pyc", ".pyw", ".c", ".h", ".cpp", ".cc", ".cxx", ".hpp", ".js",
     ".ts", ".rs", ".go", ".java", ".rb", ".pl", ".php", ".sh", ".bash",
@@ -251,10 +259,18 @@ class ToolExecutor:
         self.jail = os.path.realpath(cfg["daemon"]["jail"])
         os.makedirs(self.jail, exist_ok=True)
         self.handlers = handlers or {}
+        self.current_user = None
 
     # ---- paths ------------------------------------------------------------
 
     def _jail_path(self, path):
+        if path == "~" or path.startswith("~/"):
+            if not self.current_user:
+                raise ToolRefusal("no user is signed in yet; use a full path")
+            if path == "~":
+                path = os.path.join("home", self.current_user)
+            else:
+                path = os.path.join("home", self.current_user, path[2:])
         p = os.path.join(self.jail, path.lstrip("/"))
         real = os.path.realpath(p)
         if real != self.jail and not real.startswith(self.jail + os.sep):
@@ -379,6 +395,11 @@ class ToolExecutor:
         if first in BANNED_DESTRUCTIVE:
             raise ToolRefusal(
                 f"'{first}' is not available to you. Nice try, though."
+            )
+        if first in BANNED_SHELL_UTILS:
+            raise ToolRefusal(
+                f"'{first}' does not exist here. File inspection is done with "
+                f"the list/read/search tools, not the shell."
             )
         for tok in cmd.split():
             if tok.startswith("/"):
