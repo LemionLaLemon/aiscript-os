@@ -2,10 +2,12 @@
 """Phase-2 reliability battery. Cases 1-3 run real sessions against a live
 llama-server and score answers against ground truth from the jail. The
 repeat-guard case is a deterministic fake-engine unit check (no server)."""
+import csv
 import os
 import re
 import sys
 import json
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -48,9 +50,18 @@ def run_case(daemon, task):
 
 def main():
     guard_only = "--guard-only" in sys.argv
+    csv_path = None
     port = None
-    if "--port" in sys.argv:
-        port = int(sys.argv[sys.argv.index("--port") + 1])
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        if args[i] == "--port" and i + 1 < len(args):
+            port = int(args[i + 1]); i += 2
+        elif args[i] == "--csv" and i + 1 < len(args):
+            csv_path = args[i + 1]; i += 2
+        else:
+            i += 1
+
     if port:
         CFG["llama"]["port"] = port
         CFG["llama"]["host"] = "127.0.0.1"
@@ -66,6 +77,7 @@ def main():
             print(f"[SKIP live cases] {e}")
             daemon = None
 
+    results = {}
     if daemon:
         cases = [
             ("five", 5),
@@ -81,8 +93,10 @@ def main():
                 top = top_sizes(n)
                 missing = answer_missing_files(ans, [t[0] for t in top])
                 ok = not missing
+                results[label] = "pass" if ok else "fail"
                 print(f"[{'PASS' if ok else 'FAIL'}] {label}: missing={missing}")
             except Exception as e:
+                results[label] = "fail"
                 print(f"[FAIL] {label}: {e}")
         # total-size case
         try:
@@ -93,9 +107,11 @@ def main():
             ))
             total = sum(s for _, s in top_sizes(5))
             ok = answer_has_int(ans, total)
+            results["total"] = "pass" if ok else "fail"
             print(f"[{'PASS' if ok else 'FAIL'}] total: expected {total} "
                   f"in answer (len={len(ans)})")
         except Exception as e:
+            results["total"] = "fail"
             print(f"[FAIL] total: {e}")
     elif not guard_only:
         print("[SKIP live cases] no demo Downloads dir")
@@ -143,11 +159,42 @@ def main():
         if m.get("role") == "tool" and "[repeated call]" in m.get("content", "")
     )
     if steered == 3 and len(fake_exec.executed) == 2:
+        results["guard"] = "pass"
         print(f"[PASS] 3 identical-tool calls steered after 2 real executions "
               f"({len(fake_exec.executed)} executed, {steered} steers)")
     else:
+        results["guard"] = "fail"
         print(f"[FAIL] executed={len(fake_exec.executed)} steered={steered} "
               f"engine_calls={fake_engine.n} out={out!r}")
+
+    if csv_path:
+        os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
+        file_exists = os.path.exists(csv_path)
+        with open(csv_path, "a", newline="") as f:
+            w = csv.writer(f)
+            if not file_exists:
+                w.writerow(["date", "model", "build", "backend", "temp",
+                            "bench_tools_raw", "bench_tools_valid", "reliability",
+                            "rel_five", "rel_ten", "rel_total", "rel_guard",
+                            "prefill_tokps", "decode_tokps", "notes"])
+            model_name = os.path.basename(CFG["llama"].get("model_path", ""))
+            rel_score = sum(1 for v in results.values() if v == "pass")
+            w.writerow([
+                time.strftime("%Y-%m-%d"),
+                model_name,
+                "llama-b10333 CPU",
+                "CPU",
+                CFG["daemon"].get("temp", 0.15),
+                "", "",
+                f"{rel_score}/4",
+                results.get("five", ""),
+                results.get("ten", ""),
+                results.get("total", ""),
+                results.get("guard", ""),
+                "", "",
+                "",
+            ])
+        print(f"[csv] appended to {csv_path}")
 
 
 if __name__ == "__main__":

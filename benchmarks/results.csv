@@ -1,0 +1,8 @@
+date,model,build,backend,temp,bench_tools_raw,bench_tools_valid,reliability,rel_five,rel_ten,rel_total,rel_guard,prefill_tokps,decode_tokps,notes
+2026-08-10,Qwen3.5-2B-Q4_K_M,llama-b10333 CPU,CPU,0.15,2/4,2/3,4/4,pass,pass,pass,pass,32.6,23.0,production default
+2026-08-10,Qwen3.5-4B-Q4_K_M,llama-b10333 CPU,CPU,0.15,3/4,3/3,4/4,pass,pass,pass,pass,40.6,13.1,best quality — do not rebench
+2026-08-10,LFM2.5-8B-A1B-Q4_K_M,llama-b10333 CPU,CPU,0.2,1/4,1/3,3/4,pass,fail,pass,pass,64.2,27.7,read/run refused (old policy)
+2026-08-10,LFM2.5-8B-A1B-Q4_K_M,llama-b10333 CPU,CPU,0.2,3/4,3/3,4/4,pass,pass,pass,pass,80.2,33.7,policy fix — read/run work now
+2026-08-10,LFM2.5-2.6B-Q4_K_M,llama-b10333 CPU,CPU,0.15,3/4,3/3,3/4,pass,pass,timeout,pass,83.8,24.4,total case too verbose (5min+)
+2026-08-10,LFM2.5-8B-A1B-Q4_K_M,Vulkan b10333,iGPU,0.2,,,,,,-,-,8.5,17.4,iGPU slower than CPU
+2026-08-10,Qwen3.5-2B-Q4_K_M,Vulkan b10333,iGPU,0.15,,,,,,-,-,10.7,11.7,iGPU slower than CPU
