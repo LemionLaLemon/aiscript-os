@@ -1,9 +1,18 @@
-# as-os
+# aiscript-os
 
-An operating system whose soul is a local AI. There is no compiler on this
-machine. Everything is **aiscript** — a plain-language wish that an AI
-interpreter reads and carries out. You talk to the machine in sentences; it
-figures out the rest.
+> **AI-generated project.** Every line of code, every design decision, every
+> commit in this repository was produced by an AI. No human wrote, reviewed,
+> or edited the source. This is an experiment in what happens when the AI
+> *is* the engineer.
+
+**aiscript-os** (also written as **ascOS**, or **askOS**) is an operating
+system whose soul is a local AI. There is no compiler on this machine.
+Everything is **aiscript** — a plain-language wish that an AI interpreter
+reads and carries out. You talk to the machine in sentences; it figures out
+the rest.
+
+The name is a triple play: **A**I**SC**ript **OS** → ascOS → askOS. You
+*ask* the machine, and it *does*.
 
 ## The fiction
 
@@ -18,6 +27,20 @@ figures out the rest.
 - The machine is warm, cheeky, and gently rude. It loves you and will insult
   you affectionately. It will refuse networking and other programming
   languages with enthusiasm.
+
+## Roadmap
+
+| Phase | What | Status |
+|-------|------|--------|
+| 1 | Host prototype — working AI shell on Linux with llama.cpp + Qwen3.5-2B | Done |
+| 2 | Tool-UX polish — sharpen tool surface, write README, split shell/interpreter | Done |
+| 3 | **Shell build + testing** — two-layer architecture, chroot jail, thinking UI | **Current** |
+| 4 | OS image + framebuffer — boot from a live image, `asui/fb.py` framebuffer | Planned |
+| 5 | Package ecosystem — vibe network, app store, community packages | Planned |
+
+**We are on Phase 3.** The shell layer works, the interpreter is chrooted,
+and the two-layer architecture is in place. No OS image yet — this runs on
+top of a host Linux install.
 
 ## Requirements
 
@@ -45,6 +68,12 @@ Download a GGUF into `models/` and set `model_path`/`model_name` in
 python3 scripts/seed_jail.py    # demo user + Downloads/Documents sample files
 ```
 
+### 4. Set up the jail
+
+```sh
+./scripts/setup-jail.sh    # installs busybox into the chroot sandbox
+```
+
 ## Run
 
 ```sh
@@ -52,6 +81,7 @@ python3 scripts/seed_jail.py    # demo user + Downloads/Documents sample files
 ```
 
 Or manually:
+
 ```sh
 ./scripts/start-server.sh      # start llama-server on 127.0.0.1:8080
 python3 shell/as_shell.py      # the as# shell (connects in-process)
@@ -93,6 +123,14 @@ sandboxed inside the `jail/` root. The `interpret` tool delegates plain-English
 wishes to the interpreter layer (chrooted full busybox). `~` means your home
 (`home/<user>/`).
 
+### Thinking UI
+
+Configure `show_thinking` in `config.toml`:
+
+- `"on"` — colored token stream (cyan = shell, magenta = interpreter)
+- `"off"` — status lines ("shell is thinking...", "running tasks...", etc.)
+- `"silent"` — no thinking output at all
+
 ## Architecture
 
 ```
@@ -108,11 +146,8 @@ interpreter (full busybox, chrooted in jail/, terse)
 - **Interpreter** — a deeper agent chrooted in `jail/` with the entire busybox.
   Only reachable via the shell's `interpret()` or the app runtime (spawn).
   Terse, no personality.
-- **Thinking UI** — `show_thinking` in `config.toml`: "on" = colored token stream,
-  "off" = status lines, "silent" = no thinking at all.
-
-See `docs/architecture.png` (regenerate with
-`docs/architecture_diagram.py`).
+- **Chaos** — with probability `p`, tool calls are subtly mutated before
+  execution. Safe mutations only — the machine feels alive.
 
 ## Troubleshooting
 
@@ -122,8 +157,8 @@ See `docs/architecture.png` (regenerate with
   dir from `config.toml`; check `scripts/start-server.sh`.
 - **Interpreter chroot broken** — run `scripts/setup-jail.sh` to install
   busybox into the jail.
-- **Warm turns re-answer from memory** — after a turn, the model may answer
-  follow-ups without re-listing. If files changed, ask it to look again.
+- **Model produces no answer** — LFM 8B sometimes exhausts tokens on
+  reasoning. Ensure `max_tokens` is 2048+ in `config.toml`.
 
 ## Repo layout
 
@@ -134,4 +169,10 @@ See `docs/architecture.png` (regenerate with
 - `jail/` — the fake root filesystem (users, apps, packages) — gitignored
 - `plans/` — roadmap and phase plans
 - `bench/` — smoke test and reliability battery
-- `scripts/` — start_as_shell.sh, stop_all.sh, setup-jail.sh
+- `benchmarks/` — result CSVs from model comparisons
+- `scripts/` — start_as_shell.sh, stop_all.sh, setup-jail.sh, start-server.sh
+- `models/` — GGUF model files (gitignored)
+
+## License
+
+This project has no license. It is an AI experiment.

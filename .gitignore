@@ -2,6 +2,7 @@ models/*.gguf
 tools/llama.cpp/
 tools/llama.cpp-src/
 jail/
+docs/
 __pycache__/
 *.pyc
 .venv/
