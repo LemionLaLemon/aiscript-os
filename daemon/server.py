@@ -170,9 +170,9 @@ class Daemon:
             system_prompt=self.interpreter_prompt(),
             tools=INTERPRETER_TOOLS,
             temp=0.1,
-            max_tokens=400,
+            max_tokens=2048,
             max_loops=8,
-            time_budget=60,
+            time_budget=120,
             layer="interpreter",
         )
 
@@ -197,9 +197,9 @@ class Daemon:
             system_prompt=self.interpreter_prompt(),
             tools=INTERPRETER_TOOLS,
             temp=0.1,
-            max_tokens=400,
-            max_loops=4,
-            time_budget=160,
+            max_tokens=2048,
+            max_loops=32,
+            time_budget=600,
             layer="interpreter",
         )
 
@@ -250,12 +250,3 @@ class Daemon:
             if os.path.isfile(entry):
                 return entry
         raise ToolRefusal(f"app not found: {app}")
-
-    def _sub_tools(self):
-        """App interpreters work on files and system info only: no shell
-        (run), no user-facing prompts (ask/draw), no re-entering vibe, no
-        machine control."""
-        sub = [t for t in INTERPRETER_TOOLS
-               if t["function"]["name"]
-               not in ("ask", "draw", "shutdown")]
-        return sub

@@ -401,6 +401,43 @@ _INTERPRETER_TOOL_SCHEMAS = [
             "parameters": {"type": "object", "properties": {}},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "ask",
+            "description": "Ask the user a question and get an answer. "
+                           "Use this to interact with the user mid-turn — "
+                           "e.g. to clarify inputs, confirm actions, or run "
+                           "an interactive loop. choices is an optional list "
+                           "the user can pick from.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string"},
+                    "choices": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["prompt"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "draw",
+            "description": "Render a UI panel with asui. spec is a dict: "
+                           "{'title': str, 'lines': [str], 'boxes': "
+                           "[{'x','y','w','h'}], 'status': str}. Draws to the "
+                           "terminal/framebuffer.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "spec": {"type": "object"},
+                    "clear": {"type": "boolean"},
+                },
+                "required": ["spec"],
+            },
+        },
+    },
 ]
 
 # Keep TOOLS as shell tools for backward compat (bench scripts import it)

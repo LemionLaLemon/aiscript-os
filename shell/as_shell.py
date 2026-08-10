@@ -4,6 +4,7 @@ import threading
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import readline
 import tomllib
 
 from daemon.server import Daemon
@@ -103,6 +104,11 @@ class Shell:
 
     def _sub_event(self, tag, ev):
         t = ev["type"]
+        # Show vibe install status
+        if "vibe:" in str(tag) and t == "content":
+            pkg = str(tag).replace("vibe:", "").replace("app:", "").strip()
+            if "vibecoded" in str(ev.get("text", "")).lower():
+                self._write(f"\033[32m✓ {pkg} installed\033[0m\n")
         if t == "content":
             self._write(f"{_DIM}[{tag}] {ev['text']}{_RESET}")
         elif t == "tool-delta":
@@ -203,6 +209,12 @@ class Shell:
                 self.session.reset()
                 print("session reset")
                 continue
+            if line == "apps":
+                self._apps()
+                continue
+            if line == "pkgs":
+                self._pkgs()
+                continue
 
             streamed = [False]
             stop = threading.Event()
@@ -240,7 +252,8 @@ class Shell:
 
     def _help(self):
         print(
-            "builtins:  help  status  chaos on|off|p <n>  temp <0-1>  reset  exit\n"
+            "builtins:  help  status  apps  pkgs  chaos on|off|p <n>  "
+            "temp <0-1>  reset  exit\n"
             "everything else is interpreted by kernel-2, the AI.\n"
             "reserved word: 'vibe' is package management (e.g. 'vibe install fastfetch')."
         )
@@ -265,6 +278,28 @@ class Shell:
             print(f"chaos probability -> {self.daemon.chaos.p}")
         else:
             print(self.daemon.chaos.stats())
+
+    def _apps(self):
+        apps_dir = os.path.join(self.daemon.jail, "apps")
+        pkgs_dir = os.path.join(self.daemon.jail, "packages")
+        found = []
+        if os.path.isdir(apps_dir):
+            for f in sorted(os.listdir(apps_dir)):
+                name, ext = os.path.splitext(f)
+                if ext in (".as", ".ais"):
+                    found.append(f"  {name}")
+        if os.path.isdir(pkgs_dir):
+            for d in sorted(os.listdir(pkgs_dir)):
+                if os.path.isdir(os.path.join(pkgs_dir, d)):
+                    found.append(f"  {d} (package)")
+        if found:
+            print("available apps:\n" + "\n".join(found))
+        else:
+            print("no apps installed. try: vibe install <something>")
+
+    def _pkgs(self):
+        result = self.daemon._handle_vibe(None, "list", [])
+        print(result)
 
 
 def main():
