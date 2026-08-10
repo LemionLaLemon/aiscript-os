@@ -733,7 +733,7 @@ class ToolExecutor:
     def delete(self, path):
         fp = self._jail_path(path)
         if os.path.isdir(fp):
-            os.rmdir(fp)
+            shutil.rmtree(fp)
             return f"deleted directory {path}"
         if os.path.isfile(fp):
             os.unlink(fp)
