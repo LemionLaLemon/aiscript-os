@@ -17,7 +17,7 @@ PYEOF
 )
 eval "$(python3 -c "$PY")"
 
-echo "starting big brain (2B) on port $port, cores $mask"
+echo "starting big brain (LFM 8B) on port $port, cores $mask"
 setsid bash -c "MODEL=$model PORT=$port SLOTS=$slots \
   THREADS=$threads MASK=$mask \
   exec scripts/start-server.sh > /tmp/opencode/llama-server.log 2>&1 < /dev/null &"

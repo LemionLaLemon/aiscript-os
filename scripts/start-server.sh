@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Start llama-server with the as-os model.
+# Start llama-server with the as-os model (LFM2.5-8B-A1B).
 # Uses only the physical P-cores (this laptop: 4P + 4E), which measured fastest.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 BIN=tools/llama.cpp/llama-b10333
-MODEL=${MODEL:-models/Qwen3.5-2B-Q4_K_M.gguf}
+MODEL=${MODEL:-models/LFM2.5-8B-A1B-Q4_K_M.gguf}
 PORT=${PORT:-8080}
 CTX=${CTX:-8192}        # context PER SLOT
 THREADS=${THREADS:-4}
@@ -25,6 +25,8 @@ exec taskset -c "$MASK" env LD_LIBRARY_PATH="$BIN" "$BIN/llama-server" \
   -rea off \
   --host 127.0.0.1 \
   --port "$PORT" \
-  --temp 0.15 \
+  --temp 0.2 \
+  --top-k 80 \
+  --repeat-penalty 1.05 \
   --no-webui \
   --log-disable

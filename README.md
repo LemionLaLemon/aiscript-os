@@ -23,8 +23,8 @@ figures out the rest.
 
 - Linux with a reasonably modern CPU (built and tuned on an i5-13420H).
 - ~8 GB free RAM (the model + KV cache dominate).
-- A Qwen3.5 GGUF model in `models/` (2B is the default; a 4B is also
-  available and slower).
+- A GGUF model in `models/` (LFM2.5-8B-A1B is the default; Qwen3.5-2B/4B
+  also available).
 
 ## Build
 
@@ -37,7 +37,7 @@ with `--cache-prompt` support works.
 ### 2. Models
 
 Download a GGUF into `models/` and set `model_path`/`model_name` in
-`config.toml`. Default: `Qwen3.5-2B-Q4_K_M.gguf`.
+`config.toml`. Default: `LFM2.5-8B-A1B-Q4_K_M.gguf`.
 
 ### 3. Seed the sandbox (optional)
 
