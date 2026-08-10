@@ -1,5 +1,6 @@
 models/*.gguf
 tools/llama.cpp/
+tools/llama.cpp-src/
 jail/
 __pycache__/
 *.pyc

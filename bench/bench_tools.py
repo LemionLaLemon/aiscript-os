@@ -52,8 +52,14 @@ TASKS = [
 
 
 def main():
+    port = None
+    if "--port" in sys.argv:
+        port = int(sys.argv[sys.argv.index("--port") + 1])
     with open(os.path.join(ROOT, "config.toml"), "rb") as f:
         cfg = tomllib.load(f)
+    if port:
+        cfg["llama"]["port"] = port
+        cfg["llama"]["host"] = "127.0.0.1"
     engine = ModelEngine(cfg["llama"])
     if not engine.ping():
         print("llama-server not running. start it first:\n  scripts/start-server.sh")

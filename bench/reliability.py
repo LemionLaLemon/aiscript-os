@@ -48,6 +48,12 @@ def run_case(daemon, task):
 
 def main():
     guard_only = "--guard-only" in sys.argv
+    port = None
+    if "--port" in sys.argv:
+        port = int(sys.argv[sys.argv.index("--port") + 1])
+    if port:
+        CFG["llama"]["port"] = port
+        CFG["llama"]["host"] = "127.0.0.1"
     daemon = None
     if not guard_only and os.path.exists(DOWNLOADS):
         from daemon.server import Daemon
