@@ -48,12 +48,16 @@ python3 scripts/seed_jail.py    # demo user + Downloads/Documents sample files
 ## Run
 
 ```sh
-./scripts/start-server.sh        # start llama-server on 127.0.0.1:8080
-python3 shell/as_shell.py        # the as# shell (connects in-process)
+./scripts/start_as_shell.sh    # starts llama-server + launches the as# shell
 ```
 
-`scripts/start-all.sh` does both. On a laptop you can raise power limits and
-switch to a latency profile first (root): `sudo ./scripts/tune.sh`.
+Or manually:
+```sh
+./scripts/start-server.sh      # start llama-server on 127.0.0.1:8080
+python3 shell/as_shell.py      # the as# shell (connects in-process)
+```
+
+To stop everything: `./scripts/stop_all.sh`
 
 On first boot, the machine runs an **OOBE** — it introduces itself, creates
 your user account, and asks a few personalisation questions.
@@ -81,20 +85,31 @@ help     status     chaos on|off|p <n>     temp <0-1>     reset     exit
 - `chaos` toggles the system's chaos probability (it occasionally mutates
   tool calls for fun); `p 0` disables it entirely.
 
-### Tools kernel-2 has
+### Tools the shell has
 
 `list` `read` `write` `append` `run` `search` `calc` `info` `ask` `draw`
-`spawn` `vibe` `shutdown` — all sandboxed inside the `jail/` root. No
-networking, no other languages, nothing destructive. `~` means your home
+`spawn` `vibe` `interpret` `delete` `move` `copy` `mkdir` `shutdown` — all
+sandboxed inside the `jail/` root. The `interpret` tool delegates plain-English
+wishes to the interpreter layer (chrooted full busybox). `~` means your home
 (`home/<user>/`).
 
 ## Architecture
 
 ```
-as# shell ──> daemon (sessions) ──> kernel-2 policy ──> tools ──> jail sandbox
-                              └──> llama-server :8080 (the 2B brain)
-              spawn/vibe create AI sub-sessions that interpret apps
+as# shell (shell agent, personality, toolset)
+    │  plain-English wishes via interpret()
+    ▼
+interpreter (full busybox, chrooted in jail/, terse)
+    └── apps (spawn) also use the interpreter
 ```
+
+- **Shell** — the user-facing agent with personality and the toolset. Owns the
+  `policy.md` prompt. Runs sandboxed tools directly.
+- **Interpreter** — a deeper agent chrooted in `jail/` with the entire busybox.
+  Only reachable via the shell's `interpret()` or the app runtime (spawn).
+  Terse, no personality.
+- **Thinking UI** — `show_thinking` in `config.toml`: "on" = colored token stream,
+  "off" = status lines, "silent" = no thinking at all.
 
 See `docs/architecture.png` (regenerate with
 `docs/architecture_diagram.py`).
@@ -105,16 +120,18 @@ See `docs/architecture.png` (regenerate with
   Warm turns run in 3–6s.
 - **Engine won't start** — llama-server needs the model path and build
   dir from `config.toml`; check `scripts/start-server.sh`.
+- **Interpreter chroot broken** — run `scripts/setup-jail.sh` to install
+  busybox into the jail.
 - **Warm turns re-answer from memory** — after a turn, the model may answer
   follow-ups without re-listing. If files changed, ask it to look again.
-- **Slower on 4B** — swap `model_path` back to the 2B.
 
 ## Repo layout
 
-- `daemon/` — brain policy, sessions, tools, OOBE
+- `daemon/` — brain policy (shell + interpreter), sessions, tools, OOBE
 - `aiscript/` — the runner (interpret apps) and vibe (vibecode packages)
 - `asui/` — tiny UI library (terminal now; framebuffer comes with the image)
 - `shell/as_shell.py` — the interactive shell
 - `jail/` — the fake root filesystem (users, apps, packages) — gitignored
 - `plans/` — roadmap and phase plans
 - `bench/` — smoke test and reliability battery
+- `scripts/` — start_as_shell.sh, stop_all.sh, setup-jail.sh

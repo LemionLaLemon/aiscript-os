@@ -35,12 +35,22 @@ def read_profile(path):
     return prof
 
 
+# ANSI color codes
+_SHELL_COLOR = "\033[36m"       # cyan
+_INTERP_COLOR = "\033[35m"      # magenta
+_DIM = "\033[2m"
+_RESET = "\033[0m"
+_TOOL_COLOR = "\033[36m"        # cyan for ⟳
+
+
 class Shell:
     def __init__(self, cfg):
         self.cfg = cfg
         self.daemon = Daemon(cfg)
         self.daemon.stream_out.append(self._sub_event)
         self._out = threading.Lock()
+        self.show_thinking = cfg.get("daemon", {}).get("show_thinking", "on")
+        self._content_started = False
 
     # ---- event rendering --------------------------------------------------
 
@@ -49,27 +59,58 @@ class Shell:
             sys.stdout.write(text)
             sys.stdout.flush()
 
+    def _clear_line(self):
+        self._write("\r\033[K")
+
     def _main_event(self, ev):
         t = ev["type"]
-        if t == "content":
+        if t == "phase":
+            self._handle_phase(ev)
+        elif t == "content":
+            if not self._content_started:
+                self._clear_line()
+                self._content_started = True
             self._write(ev["text"])
         elif t == "thinking":
-            self._write(f"\033[2m{ev['text']}\033[0m")
+            layer = ev.get("layer", "shell")
+            if self.show_thinking == "on":
+                color = _SHELL_COLOR if layer == "shell" else _INTERP_COLOR
+                self._write(f"{_DIM}{color}{ev['text']}{_RESET}")
         elif t == "tool-delta":
-            self._write(f"\r\033[K\033[36m⟳ {ev['name']}({ev['args']})\033[0m")
+            self._write(f"\r\033[K{_TOOL_COLOR}\u27f3 {ev['name']}({ev['args']}){_RESET}")
         elif t == "tool":
-            args = ", ".join(f"{k}={v}" for k, v in ev["args"].items())
-            self._write(f"\r\033[K\033[36m⟳ {ev['name']}({args})\033[0m\n")
+            if self.show_thinking == "on":
+                args = ", ".join(f"{k}={v}" for k, v in ev["args"].items())
+                self._write(f"\r\033[K{_TOOL_COLOR}\u27f3 {ev['name']}({args}){_RESET}\n")
+            elif self.show_thinking == "off":
+                self._write("running tasks...\n")
+
+    def _handle_phase(self, ev):
+        state = ev.get("state", "")
+        layer = ev.get("layer", "shell")
+        if self.show_thinking == "silent":
+            return
+        if self.show_thinking == "off":
+            label = f"{layer} is thinking..." if state == "thinking" else \
+                    "running tasks..." if state == "running" else \
+                    "forming an answer..." if state == "answering" else \
+                    f"{layer} is working..."
+            self._write(f"{label}\n")
+        elif self.show_thinking == "on":
+            if state == "thinking":
+                color = _SHELL_COLOR if layer == "shell" else _INTERP_COLOR
+                self._write(f"{_DIM}{color}{layer} is thinking...{_RESET}\n")
 
     def _sub_event(self, tag, ev):
         t = ev["type"]
         if t == "content":
-            self._write(f"\033[2m[{tag}] {ev['text']}\033[0m")
+            self._write(f"{_DIM}[{tag}] {ev['text']}{_RESET}")
         elif t == "tool-delta":
-            self._write(f"\r\033[K\033[35m[{tag}] ⟳ {ev['name']}({ev['args']})\033[0m")
+            self._write(f"\r\033[K\033[35m[{tag}] \u27f3 {ev['name']}({ev['args']}){_RESET}")
         elif t == "tool":
-            args = ", ".join(f"{k}={v}" for k, v in ev["args"].items())
-            self._write(f"\r\033[K\033[35m[{tag}] ⟳ {ev['name']}({args})\033[0m\n")
+            if self.show_thinking == "on":
+                args = ", ".join(f"{k}={v}" for k, v in ev["args"].items())
+                self._write(f"\r\033[K\033[35m[{tag}] \u27f3 {ev['name']}({args}){_RESET}\n")
 
     # ---- interactive handlers ------------------------------------------------
 
@@ -101,10 +142,10 @@ class Shell:
         self.daemon.executor.handlers["draw"] = self.draw_handler
 
         print("\033[1;36m" + r"""     _    ____      
-    / \  / ___|    
-   / _ \ \___ \   
-  / ___ \ ___) |  
- /_/   \_\____/   
+     / \  / ___|    
+    / _ \ \___ \   
+   / ___ \ ___) |  
+  /_/   \_\____/   
 """ + "\033[0m")
         print("as-os — the OS whose soul is a local AI. booting…\n")
 
@@ -165,16 +206,20 @@ class Shell:
 
             streamed = [False]
             stop = threading.Event()
+            self._content_started = False
 
             def spinner():
                 dots = 0
                 while not stop.wait(0.4):
                     dots += 1
-                    self._write(f"\r\033[K\033[2mthinking{'…' * (dots % 3 + 1)}\033[0m")
+                    if stop.is_set():
+                        break
+                    self._write(f"\r\033[K{_DIM}thinking{'…' * (dots % 3 + 1)}{_RESET}")
 
             def on_event(ev):
                 stop.set()
-                if ev["type"] == "content":
+                if ev["type"] == "content" and not streamed[0]:
+                    self._clear_line()
                     streamed[0] = True
                 self._main_event(ev)
 
@@ -183,9 +228,14 @@ class Shell:
                 out = self.session.user_turn(line, on_event=on_event)
             finally:
                 stop.set()
-            self._write("\r\033[K")
-            if out and not streamed[0]:
-                print(out)
+
+            if streamed[0]:
+                if not out.endswith("\n"):
+                    self._write("\n")
+            else:
+                self._clear_line()
+                if out:
+                    print(out)
             print()
 
     def _help(self):
@@ -200,6 +250,7 @@ class Shell:
         print(f"temp: {self.session.temp}")
         print(f"user: {self.daemon.current_user}")
         print(f"slots: {len(self.daemon.sessions)} sessions")
+        print(f"thinking: {self.show_thinking}")
 
     def _chaos(self, line):
         parts = line.split()

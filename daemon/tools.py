@@ -8,7 +8,7 @@ import time
 
 # ---------------------------------------------------------------- schemas ---
 
-TOOLS = [
+_SHELL_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
@@ -200,6 +200,82 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "interpret",
+            "description": "Delegate a task to the interpreter layer. Describe "
+                           "the goal in plain English, never shell syntax. Say "
+                           "'list files in the working directory', not 'run ls'. "
+                           "The interpreter has the full busybox shell chrooted "
+                           "in the sandbox.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "request": {"type": "string", "description": "plain-English goal"},
+                },
+                "required": ["request"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete",
+            "description": "Delete a file or empty directory.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "move",
+            "description": "Move or rename a file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "src": {"type": "string"},
+                    "dst": {"type": "string"},
+                },
+                "required": ["src", "dst"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "copy",
+            "description": "Copy a file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "src": {"type": "string"},
+                    "dst": {"type": "string"},
+                },
+                "required": ["src", "dst"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "mkdir",
+            "description": "Create a directory.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "shutdown",
             "description": "Shut the system down. Refuses if the system has "
                            "been up less than 2 minutes.",
@@ -207,6 +283,135 @@ TOOLS = [
         },
     },
 ]
+
+_INTERPRETER_TOOL_SCHEMAS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "run",
+            "description": "Run a command in the busybox shell. You are "
+                           "chrooted in the sandbox — all commands are safe.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                },
+                "required": ["command"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list",
+            "description": "List files and directories inside a path. "
+                           "Sort by 'size' (largest first), 'name', or 'mtime'.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "directory"},
+                    "sort": {"type": "string", "enum": ["size", "name", "mtime", "none"]},
+                    "top": {"type": "integer"},
+                    "filter": {"type": "string"},
+                    "recursive": {"type": "boolean"},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read",
+            "description": "Read text from a file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "start_line": {"type": "integer"},
+                    "max_lines": {"type": "integer"},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write",
+            "description": "Create or overwrite a text file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+                "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "append",
+            "description": "Append text to a file (create it if missing).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+                "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search",
+            "description": "Search files for text matching a pattern.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "pattern": {"type": "string"},
+                    "regex": {"type": "boolean"},
+                },
+                "required": ["path", "pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "calc",
+            "description": "Evaluate a math expression.",
+            "parameters": {
+                "type": "object",
+                "properties": {"expr": {"type": "string"}},
+                "required": ["expr"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "info",
+            "description": "System info: memory, disk, cpu, uptime.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+]
+
+# Keep TOOLS as shell tools for backward compat (bench scripts import it)
+TOOLS = [t for t in _SHELL_TOOL_SCHEMAS if t["function"]["name"] != "interpret"]
+TOOLS = [t for t in TOOLS if t["function"]["name"] != "delete"]
+TOOLS = [t for t in TOOLS if t["function"]["name"] != "move"]
+TOOLS = [t for t in TOOLS if t["function"]["name"] != "copy"]
+TOOLS = [t for t in TOOLS if t["function"]["name"] != "mkdir"]
+
+SHELL_TOOLS = _SHELL_TOOL_SCHEMAS
+INTERPRETER_TOOLS = _INTERPRETER_TOOL_SCHEMAS
 
 # Tool names that only make sense interactively; sub-sessions get a stub.
 INTERACTIVE_TOOLS = {"ask", "draw", "shutdown"}
@@ -229,14 +434,6 @@ BANNED_DESTRUCTIVE = {
     "git clone", "cryptsetup", "dmesg", "insmod", "rmmod",
 }
 
-# File inspection belongs to the list/read/search tools, never the shell.
-BANNED_SHELL_UTILS = {
-    "ls", "dir", "cat", "tac", "head", "tail", "less", "more", "sort",
-    "grep", "egrep", "fgrep", "rg", "find", "du", "df", "stat", "wc",
-    "cut", "awk", "sed", "tr", "echo", "basename", "dirname", "xargs",
-    "uniq", "fold", "nl", "od", "hexdump", "file", "which", "type",
-}
-
 BANNED_FILE_EXT = {
     ".py", ".pyc", ".pyw", ".c", ".h", ".cpp", ".cc", ".cxx", ".hpp", ".js",
     ".ts", ".rs", ".go", ".java", ".rb", ".pl", ".php", ".sh", ".bash",
@@ -250,6 +447,39 @@ MAX_RESULT_CHARS = 4000
 class ToolRefusal(Exception):
     pass
 
+
+# ---- chroot runner for interpreter ----------------------------------------
+
+def _chroot_run(jail, command):
+    """Run command chrooted inside jail using unshare -r (user namespace)."""
+    env = {
+        "PATH": "/bin:/usr/bin:/sbin:/usr/sbin",
+        "HOME": "/home",
+        "TERM": "dumb",
+        "LANG": "C",
+    }
+    env_str = " ".join(f'{k}="{v}"' for k, v in env.items())
+    try:
+        proc = subprocess.run(
+            ["unshare", "--user", "--map-root-user",
+             "chroot", jail, "/bin/sh", "-c",
+             f"{env_str} /bin/sh -c {repr(command)}"],
+            capture_output=True, timeout=10,
+            preexec_fn=_limit_rlimits,
+        )
+        out = proc.stdout.decode(errors="replace")
+        err = proc.stderr.decode(errors="replace")
+        tail = f"{out}\n{err}".strip()
+        if len(tail) > MAX_RESULT_CHARS:
+            tail = tail[:MAX_RESULT_CHARS] + "\n...[truncated]"
+        return f"[exit {proc.returncode}]\n{tail}" if tail else f"[exit {proc.returncode}]"
+    except subprocess.TimeoutExpired:
+        return "[run timed out after 10s]"
+    except FileNotFoundError:
+        return "[chroot: unshare not available — run scripts/setup-jail.sh first]"
+
+
+# ---------------------------------------------------------------- executor ---
 
 class ToolExecutor:
     """Runs parsed tool calls against a sandboxed jail filesystem."""
@@ -285,7 +515,7 @@ class ToolExecutor:
                 f"aiscript (.as, .am, .aconf). Write it in aiscript instead."
             )
 
-    # ---- tools ------------------------------------------------------------
+    # ---- shell tools ------------------------------------------------------
 
     def list(self, path, sort="none", top=None, filter=None, recursive=False):
         root = self._jail_path(path or ".")
@@ -298,8 +528,6 @@ class ToolExecutor:
                 fp = os.path.join(d, name)
                 rel = os.path.relpath(fp, self.jail)
                 if os.path.isdir(fp):
-                    # filter must not block recursion: descend into every
-                    # directory, only gate whether the dir itself is shown
                     size = self._dir_size(fp) if sort == "size" else 0
                     if not filter or fnmatch.fnmatch(name, filter):
                         entries.append((rel, "dir", size, os.path.getmtime(fp)))
@@ -397,11 +625,6 @@ class ToolExecutor:
             raise ToolRefusal(
                 f"'{first}' is not available to you. Nice try, though."
             )
-        if first in BANNED_SHELL_UTILS:
-            raise ToolRefusal(
-                f"'{first}' does not exist here. File inspection is done with "
-                f"the list/read/search tools, not the shell."
-            )
         for tok in cmd.split():
             if tok.startswith("/"):
                 raise ToolRefusal(
@@ -419,7 +642,7 @@ class ToolExecutor:
             proc = subprocess.run(
                 ["/bin/sh", "-c", cmd],
                 cwd=self.jail, env=env, capture_output=True,
-                timeout=10, preexec_fn=self._limit_rlimits,
+                timeout=10, preexec_fn=_limit_rlimits,
             )
         except subprocess.TimeoutExpired:
             return "[run timed out after 10s]"
@@ -429,11 +652,6 @@ class ToolExecutor:
         if len(tail) > MAX_RESULT_CHARS:
             tail = tail[:MAX_RESULT_CHARS] + "\n...[truncated]"
         return f"[exit {proc.returncode}]\n{tail}" if tail else f"[exit {proc.returncode}]"
-
-    @staticmethod
-    def _limit_rlimits():
-        resource.setrlimit(resource.RLIMIT_CPU, (8, 8))
-        resource.setrlimit(resource.RLIMIT_AS, (2_000_000_000, 2_000_000_000))
 
     def search(self, path, pattern, regex=False):
         root = self._jail_path(path or ".")
@@ -506,6 +724,41 @@ class ToolExecutor:
             return "vibe is not wired up"
         return handler(target, action, flags or [])
 
+    def interpret(self, request):
+        handler = self.handlers.get("interpret")
+        if not handler:
+            return "interpreter not available"
+        return handler(request)
+
+    def delete(self, path):
+        fp = self._jail_path(path)
+        if os.path.isdir(fp):
+            os.rmdir(fp)
+            return f"deleted directory {path}"
+        if os.path.isfile(fp):
+            os.unlink(fp)
+            return f"deleted {path}"
+        raise ToolRefusal(f"{path}: no such file or directory")
+
+    def move(self, src, dst):
+        src_fp = self._jail_path(src)
+        dst_fp = self._jail_path(dst)
+        os.makedirs(os.path.dirname(dst_fp), exist_ok=True)
+        shutil.move(src_fp, dst_fp)
+        return f"moved {src} to {dst}"
+
+    def copy(self, src, dst):
+        src_fp = self._jail_path(src)
+        dst_fp = self._jail_path(dst)
+        os.makedirs(os.path.dirname(dst_fp), exist_ok=True)
+        shutil.copy2(src_fp, dst_fp)
+        return f"copied {src} to {dst}"
+
+    def mkdir(self, path):
+        fp = self._jail_path(path)
+        os.makedirs(fp, exist_ok=True)
+        return f"created {path}"
+
     def shutdown(self):
         try:
             with open("/proc/uptime") as f:
@@ -527,7 +780,7 @@ class ToolExecutor:
         handler = self.handlers.get("create_user")
         if not handler:
             return "cannot create user"
-        return handler(username, password)
+        return handler(username)
 
     def load_module(self, path):
         fp = self._jail_path(path)
@@ -536,9 +789,17 @@ class ToolExecutor:
         with open(fp, "r", errors="replace") as f:
             return f.read()[:MAX_RESULT_CHARS]
 
-    # ---- dispatch -----------------------------------------------------------
+    # ---- interpreter chrooted run -----------------------------------------
 
-    def execute(self, tool, args):
+    def run_interpreter(self, command):
+        """Run a command chrooted inside the jail — used by the interpreter layer."""
+        return _chroot_run(self.jail, command)
+
+    # ---- dispatch ----------------------------------------------------------
+
+    def execute(self, tool, args, chrooted=False):
+        if chrooted and tool == "run":
+            return self.run_interpreter(args.get("command", ""))
         fn = getattr(self, tool, None)
         if fn is None:
             raise ToolRefusal(f"unknown tool: {tool}")
@@ -599,3 +860,8 @@ def _safe_eval(expr):
         raise ValueError(f"unsupported syntax: {type(node).__name__}")
 
     return ev(tree.body)
+
+
+def _limit_rlimits():
+    resource.setrlimit(resource.RLIMIT_CPU, (8, 8))
+    resource.setrlimit(resource.RLIMIT_AS, (2_000_000_000, 2_000_000_000))

@@ -4,22 +4,9 @@ import time
 from .chaos import Chaos
 from .model import ModelEngine
 from .session import Session
-from .tools import (TOOLS, ToolExecutor, ToolRefusal)
+from .tools import (SHELL_TOOLS, INTERPRETER_TOOLS, ToolExecutor, ToolRefusal)
+from .prompt import build_shell_prompt, build_interpreter_prompt
 from . import oobe
-
-INTERPRETER_PROMPT = """You are the aiscript interpreter, and you are now
-running ONE aiscript app. aiscript has NO strict syntax: the app is a short
-plain-language wish, given to you below.
-
-Rules:
-- Do what the wish says, in as FEW tool calls as possible, then report the
-  outcome briefly and stop. There is nothing else to do.
-- Paths like "~/X" or "home/<user>/X" live in the sandbox you can see.
-- Inspect files ONLY with list/read/search (list shows sizes). There is no
-  shell here — only these file tools.
-- Do not explore, list your own directory, or re-read the app file.
-- If a path in the wish does not exist, say so in your report.
-- No networking exists. Work only with files and system info."""
 
 
 def _log(*a, **k):
@@ -42,6 +29,7 @@ class Daemon:
             "spawn": self._handle_spawn,
             "vibe": self._handle_vibe,
             "create_user": self._handle_create_user,
+            "interpret": self._handle_interpret,
         })
         self.sessions = {}
         self._slot_counter = 0
@@ -54,7 +42,7 @@ class Daemon:
     def start(self):
         if not self.engine.ping():
             raise RuntimeError(
-                "llama-server is not reachable. Start it with scripts/start-server.sh"
+                "llama-server is not reachable. Start it with scripts/start_as_shell.sh"
             )
         self._load_persisted_user()
         self.log(f"model engine alive: {self.llama_cfg['host']}:{self.llama_cfg['port']}")
@@ -72,27 +60,22 @@ class Daemon:
     def jail(self):
         return os.path.realpath(self.daemon_cfg["jail"])
 
-    # ---- sessions -------------------------------------------------------------
+    # ---- prompts ------------------------------------------------------------
 
-    def system_prompt(self):
-        policy = os.path.join(self.daemon_cfg["policy"])
-        with open(policy) as f:
-            base = f.read()
-        user = self.current_user or os.environ.get("USER", "user")
-        return (
-            f"Current user on this system: {user}.\n"
-            f"Filesystem layout:\n"
-            f"  /home/{user}       — the user's home (Downloads, Documents)\n"
-            f"  /apps             — installed aiscript apps\n"
-            f"  /packages         — vibecoded packages (managed by vibe only)\n"
-            f"System uptime so far: {self._uptime()}.\n\n" + base
-        )
+    def shell_prompt(self):
+        return build_shell_prompt(self.cfg, self.current_user)
+
+    def interpreter_prompt(self):
+        return build_interpreter_prompt(self.cfg, self.current_user)
+
+    # ---- sessions ------------------------------------------------------------
 
     def new_session(self, name, temp=None, tools=None, system_prompt=None,
-                    max_tokens=None, max_loops=None, time_budget=None):
+                    max_tokens=None, max_loops=None, time_budget=None,
+                    layer="shell"):
         engine = self.engine
-        prompt = system_prompt or self.system_prompt()
-        toolset = tools if tools is not None else TOOLS
+        prompt = system_prompt or self.shell_prompt()
+        toolset = tools if tools is not None else SHELL_TOOLS
         nslots = int(self.llama_cfg["slots"])
         slot = self._slot_counter % nslots
         self._slot_counter += 1
@@ -108,6 +91,7 @@ class Daemon:
             max_tokens=max_tokens,
             max_loops=max_loops,
             time_budget=time_budget,
+            layer=layer,
         )
         self.sessions[name] = sess
         return sess
@@ -178,16 +162,51 @@ class Daemon:
         except OSError:
             pass
 
+    def _handle_interpret(self, request):
+        """Run a plain-English wish through the interpreter layer."""
+        name = f"interp:{request[:30]}"
+        sub = self.new_session(
+            name,
+            system_prompt=self.interpreter_prompt(),
+            tools=INTERPRETER_TOOLS,
+            temp=0.1,
+            max_tokens=400,
+            max_loops=8,
+            time_budget=60,
+            layer="interpreter",
+        )
+
+        def sink(ev):
+            for cb in self.stream_out:
+                cb(("interpreter", name), ev)
+
+        self.log(f"interpret: {request}")
+        try:
+            report = sub.user_turn(request, on_event=sink)
+        except Exception as e:
+            return f"[interpreter error] {e}"
+        report = (report or "").strip()
+        return report or "(interpreter produced no output)"
+
     def _handle_spawn(self, app, args):
         from aiscript import runner
         path = self._resolve_app(app)
         name = f"app:{os.path.basename(path)}"
-        sub = self.new_session(name, system_prompt=INTERPRETER_PROMPT,
-                               tools=self._sub_tools(), temp=0.1,
-                               max_tokens=400, max_loops=4, time_budget=160)
+        sub = self.new_session(
+            name,
+            system_prompt=self.interpreter_prompt(),
+            tools=INTERPRETER_TOOLS,
+            temp=0.1,
+            max_tokens=400,
+            max_loops=4,
+            time_budget=160,
+            layer="interpreter",
+        )
+
         def sink(ev):
             for cb in self.stream_out:
                 cb(("app", name), ev)
+
         self.log(f"spawn {path} args={args}")
         try:
             report = runner.run_file(sub, path, args, on_event=sink)
@@ -236,7 +255,7 @@ class Daemon:
         """App interpreters work on files and system info only: no shell
         (run), no user-facing prompts (ask/draw), no re-entering vibe, no
         machine control."""
-        sub = [t for t in TOOLS
+        sub = [t for t in INTERPRETER_TOOLS
                if t["function"]["name"]
-               not in ("run", "ask", "draw", "vibe", "shutdown")]
+               not in ("ask", "draw", "shutdown")]
         return sub

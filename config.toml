@@ -18,8 +18,10 @@ top_p = 0.9
 max_tokens = 1024
 timeout = 120
 policy = "daemon/policy.md"
+interpreter_policy = "daemon/interpreter_policy.md"
 jail = "jail"
 packages_dir = "packages"
+show_thinking = "on"  # "on" = colored token stream, "off" = status lines, "silent" = no thinking
 
 [chaos]
 enabled = true

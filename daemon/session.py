@@ -1,7 +1,7 @@
 import json
 import time
 
-from .tools import TOOLS, ToolExecutor
+from .tools import SHELL_TOOLS, INTERPRETER_TOOLS, ToolExecutor
 
 
 class Session:
@@ -11,7 +11,8 @@ class Session:
 
     def __init__(self, engine, executor, system_prompt, slot=0, temp=0.15,
                  chaos=None, name="session", log=None, tools=None,
-                 max_tokens=None, max_loops=None, time_budget=None):
+                 max_tokens=None, max_loops=None, time_budget=None,
+                 layer="shell"):
         self.engine = engine
         self.executor = executor
         self.system_prompt = system_prompt
@@ -20,11 +21,13 @@ class Session:
         self.chaos = chaos
         self.name = name
         self._log = log or (lambda *a, **k: None)
-        self.tools = tools if tools is not None else TOOLS
+        self.tools = tools if tools is not None else SHELL_TOOLS
         self.max_tokens = max_tokens
         self.max_loops = max_loops or self.MAX_TOOL_LOOPS
         self.time_budget = time_budget
         self.messages = [{"role": "system", "content": system_prompt}]
+        self.layer = layer  # "shell" or "interpreter"
+        self._chrooted = (layer == "interpreter")
 
     # ---- public ------------------------------------------------------------
 
@@ -75,6 +78,11 @@ class Session:
     def _loop(self, on_event):
         started = time.time()
         recent_calls = []
+        on_event = on_event or (lambda e: None)
+
+        # Emit thinking phase
+        on_event({"type": "phase", "state": "thinking", "layer": self.layer})
+
         for i in range(self.max_loops):
             if self.time_budget and time.time() - started > self.time_budget:
                 return (
@@ -82,7 +90,6 @@ class Session:
                     f"try a smaller ask)"
                 )
             events = []
-            on_event = on_event or (lambda e: None)
             hook = lambda e: (events.append(e), on_event(e))
             msg = self.engine.chat(
                 self._request_messages(), tools=self.tools, temp=self.temp,
@@ -91,8 +98,12 @@ class Session:
             if not msg.get("tool_calls"):
                 self.messages.append(msg)
                 content = msg.get("content") or ""
+                # Emit answer phase
+                on_event({"type": "phase", "state": "answering", "layer": self.layer})
                 return content if content.strip() else "(kernel-2 went quiet.)"
             self.messages.append(msg)
+            # Emit running phase before tool exec
+            on_event({"type": "phase", "state": "running"})
             for tc in msg["tool_calls"]:
                 fn = tc["function"]["name"]
                 try:
@@ -107,8 +118,6 @@ class Session:
                 stuck_on_tool = (len(recent_calls) >= 3
                                  and all(t == tool for t, _ in recent_calls[-3:]))
                 if exact_repeat or stuck_on_tool:
-                    # model looped on the same call or the same tool; steer it
-                    # instead of burning another round-trip
                     self.messages.append({
                         "role": "tool",
                         "tool_call_id": tc.get("id", f"call_{i}"),
@@ -142,6 +151,6 @@ class Session:
 
     def _exec_tool(self, tool, args):
         try:
-            return self.executor.execute(tool, args)
+            return self.executor.execute(tool, args, chrooted=self._chrooted)
         except Exception as e:
             return f"[error] {e}"
