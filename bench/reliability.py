@@ -30,12 +30,12 @@ def top_sizes(n):
     return files[:n]
 
 
-def answer_has_files(answer, names):
-    return [n for n in names if n in answer]
+def answer_missing_files(answer, names):
+    return [n for n in names if n not in answer]
 
 
 def answer_has_int(answer, value):
-    ints = [int(m) for m in re.findall(r"\d+", answer)]
+    ints = [int(m) for m in re.findall(r"\d+", answer.replace(",", ""))]
     return value in ints
 
 
@@ -73,7 +73,7 @@ def main():
                     f"list the {n} biggest files in ~/Downloads and name all {n}",
                 ))
                 top = top_sizes(n)
-                missing = answer_has_files(ans, [t[0] for t in top])
+                missing = answer_missing_files(ans, [t[0] for t in top])
                 ok = not missing
                 print(f"[{'PASS' if ok else 'FAIL'}] {label}: missing={missing}")
             except Exception as e:
