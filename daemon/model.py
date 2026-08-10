@@ -104,6 +104,13 @@ class ModelEngine:
                     tool_calls[idx]["function"]["name"] += fn["name"]
                 if fn.get("arguments"):
                     tool_calls[idx]["function"]["arguments"] += fn["arguments"]
+                if tool_calls[idx]["function"]["name"]:
+                    emit({
+                        "type": "tool-delta",
+                        "index": idx,
+                        "name": tool_calls[idx]["function"]["name"],
+                        "args": tool_calls[idx]["function"]["arguments"],
+                    })
 
         if not tool_calls:
             return {"role": "assistant", "content": content}

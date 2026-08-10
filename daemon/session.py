@@ -7,7 +7,7 @@ from .tools import TOOLS, ToolExecutor
 class Session:
     """One conversational context = one 'AI session' (a llama-server slot)."""
 
-    MAX_TOOL_LOOPS = 8
+    MAX_TOOL_LOOPS = 16
 
     def __init__(self, engine, executor, system_prompt, slot=0, temp=0.15,
                  chaos=None, name="session", log=None, tools=None,

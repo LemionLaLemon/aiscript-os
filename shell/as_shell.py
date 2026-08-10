@@ -1,5 +1,6 @@
 import os
 import sys
+import threading
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -39,31 +40,36 @@ class Shell:
         self.cfg = cfg
         self.daemon = Daemon(cfg)
         self.daemon.stream_out.append(self._sub_event)
+        self._out = threading.Lock()
 
     # ---- event rendering --------------------------------------------------
+
+    def _write(self, text):
+        with self._out:
+            sys.stdout.write(text)
+            sys.stdout.flush()
 
     def _main_event(self, ev):
         t = ev["type"]
         if t == "content":
-            sys.stdout.write(ev["text"])
-            sys.stdout.flush()
+            self._write(ev["text"])
         elif t == "thinking":
-            sys.stdout.write(f"\033[2m{ev['text']}\033[0m")
-            sys.stdout.flush()
+            self._write(f"\033[2m{ev['text']}\033[0m")
+        elif t == "tool-delta":
+            self._write(f"\r\033[K\033[36m⟳ {ev['name']}({ev['args']})\033[0m")
         elif t == "tool":
             args = ", ".join(f"{k}={v}" for k, v in ev["args"].items())
-            sys.stdout.write(f"\n\033[36m⟳ {ev['name']}({args})\033[0m\n")
-            sys.stdout.flush()
+            self._write(f"\r\033[K\033[36m⟳ {ev['name']}({args})\033[0m\n")
 
     def _sub_event(self, tag, ev):
         t = ev["type"]
         if t == "content":
-            sys.stdout.write(f"\033[2m[{tag}] {ev['text']}\033[0m")
-            sys.stdout.flush()
+            self._write(f"\033[2m[{tag}] {ev['text']}\033[0m")
+        elif t == "tool-delta":
+            self._write(f"\r\033[K\033[35m[{tag}] ⟳ {ev['name']}({ev['args']})\033[0m")
         elif t == "tool":
             args = ", ".join(f"{k}={v}" for k, v in ev["args"].items())
-            sys.stdout.write(f"\n\033[35m[{tag}] ⟳ {ev['name']}({args})\033[0m\n")
-            sys.stdout.flush()
+            self._write(f"\r\033[K\033[35m[{tag}] ⟳ {ev['name']}({args})\033[0m\n")
 
     # ---- interactive handlers ------------------------------------------------
 
@@ -158,13 +164,26 @@ class Shell:
                 continue
 
             streamed = [False]
+            stop = threading.Event()
+
+            def spinner():
+                dots = 0
+                while not stop.wait(0.4):
+                    dots += 1
+                    self._write(f"\r\033[K\033[2mthinking{'…' * (dots % 3 + 1)}\033[0m")
 
             def on_event(ev):
+                stop.set()
                 if ev["type"] == "content":
                     streamed[0] = True
                 self._main_event(ev)
 
-            out = self.session.user_turn(line, on_event=on_event)
+            threading.Thread(target=spinner, daemon=True).start()
+            try:
+                out = self.session.user_turn(line, on_event=on_event)
+            finally:
+                stop.set()
+            self._write("\r\033[K")
             if out and not streamed[0]:
                 print(out)
             print()
