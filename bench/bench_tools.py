@@ -78,8 +78,8 @@ def main():
         cfg["llama"]["host"] = "127.0.0.1"
 
     if use_daemon_prompt:
-        from daemon.prompt import build_system_prompt
-        system_content = build_system_prompt(cfg)
+        from daemon.prompt import build_shell_prompt
+        system_content = build_shell_prompt(cfg)
     else:
         system_content = MINIMAL_PROMPT
 
@@ -103,18 +103,19 @@ def main():
             results.append({"label": label, "ok": False, "detail": str(e)})
             continue
         tcs = msg.get("tool_calls")
+        no_tool_ok = "no tools" in label
         if tcs:
             parsed = all(
                 json.loads(tc["function"]["arguments"]) is not None
                 for tc in tcs
             )
-            ok = parsed
+            ok = parsed and not no_tool_ok
             detail = json.dumps([
                 (tc["function"]["name"], tc["function"]["arguments"])
                 for tc in tcs
             ], ensure_ascii=False)[:200]
         else:
-            ok = False
+            ok = no_tool_ok
             detail = f"no tool call; content={msg.get('content','')[:80]!r}"
         correct += ok
         results.append({"label": label, "ok": ok, "detail": detail})
