@@ -79,6 +79,7 @@ class Session:
         started = time.time()
         recent_calls = []
         on_event = on_event or (lambda e: None)
+        all_events = []
 
         # Emit thinking phase
         on_event({"type": "phase", "state": "thinking", "layer": self.layer})
@@ -90,7 +91,7 @@ class Session:
                     f"try a smaller ask)"
                 )
             events = []
-            hook = lambda e: (events.append(e), on_event(e))
+            hook = lambda e: (events.append(e), all_events.append(e), on_event(e))
             msg = self.engine.chat(
                 self._request_messages(), tools=self.tools, temp=self.temp,
                 slot=self.slot, max_tokens=self.max_tokens, on_event=hook,
@@ -98,6 +99,15 @@ class Session:
             if not msg.get("tool_calls"):
                 self.messages.append(msg)
                 content = msg.get("content") or ""
+                # If content is empty but tools were called, use last tool result
+                if not content.strip() and all_events:
+                    last_result = None
+                    for e in reversed(all_events):
+                        if e.get("type") == "tool-result":
+                            last_result = e.get("result", "")
+                            break
+                    if last_result:
+                        content = last_result
                 # Emit answer phase
                 on_event({"type": "phase", "state": "answering", "layer": self.layer})
                 return content if content.strip() else "(kernel-2 went quiet.)"
