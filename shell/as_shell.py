@@ -162,7 +162,7 @@ class Shell:
         self.daemon.chaos.p = self.chaos_p
 
         self.session = self.daemon.new_session(
-            "shell", temp=self.temp, max_tokens=512)
+            "shell", temp=self.temp, max_tokens=2048)
         self._repl()
 
     # ---- REPL -------------------------------------------------------------------

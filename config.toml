@@ -15,7 +15,7 @@ keep_alive = true
 [daemon]
 temp = 0.2
 top_p = 0.9
-max_tokens = 1024
+max_tokens = 2048
 timeout = 120
 policy = "daemon/policy.md"
 interpreter_policy = "daemon/interpreter_policy.md"

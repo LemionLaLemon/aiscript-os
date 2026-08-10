@@ -1,4 +1,5 @@
 import json
+import re
 import time
 
 from .tools import SHELL_TOOLS, INTERPRETER_TOOLS, ToolExecutor
@@ -99,6 +100,8 @@ class Session:
             if not msg.get("tool_calls"):
                 self.messages.append(msg)
                 content = msg.get("content") or ""
+                # Strip LFM reasoning-chain leakage from content
+                content = self._strip_reasoning(content)
                 # If content is empty but tools were called, use last tool result
                 if not content.strip() and all_events:
                     last_result = None
@@ -153,6 +156,36 @@ class Session:
         return "(agent loop ran too long; giving up)"
 
     # ---- internals -----------------------------------------------------------
+
+    _REASONING_PATTERNS = [
+        re.compile(r'^The user asks?:', re.IGNORECASE),
+        re.compile(r'^We (need|can|should|must|have|are|want)', re.IGNORECASE),
+        re.compile(r'^However,', re.IGNORECASE),
+        re.compile(r'^So (we|the|I)', re.IGNORECASE),
+        re.compile(r'^The (previous|current|assistant|system)', re.IGNORECASE),
+        re.compile(r'^But (note|we|the)', re.IGNORECASE),
+        re.compile(r'^Now (we|the|I)', re.IGNORECASE),
+        re.compile(r'^Let me', re.IGNORECASE),
+        re.compile(r'^First,', re.IGNORECASE),
+        re.compile(r'^\d+\.\s', re.IGNORECASE),
+    ]
+
+    @classmethod
+    def _strip_reasoning(cls, content):
+        """Remove LFM's reasoning-chain preamble that leaks into content tokens."""
+        if not content:
+            return ""
+        lines = content.split("\n")
+        clean = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                clean.append(line)
+                continue
+            if any(p.match(stripped) for p in cls._REASONING_PATTERNS):
+                continue
+            clean.append(line)
+        return "\n".join(clean).strip()
 
     def _apply_chaos(self, tool, args):
         if self.chaos and tool in ("list", "read", "run", "search"):
