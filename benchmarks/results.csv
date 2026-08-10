@@ -10,3 +10,6 @@ date,model,build,backend,temp,bench_tools_raw,bench_tools_valid,reliability,rel_
 2026-08-11,LFM2.5-8B-A1B+1.2B-Instruct-draft,llama-b10333 CPU,CPU,0.2,,,,,,,,,16.6,16.6,INFERENCE BENCH spec-decode nmax6 draft=1.2B-Instruct; ~same as baseline -> do not adopt
 2026-08-11,LFM2.5-8B-A1B+1.2B-Thinking-draft,llama-b10333 CPU,CPU,0.2,,,,,,,,,16.7,16.7,INFERENCE BENCH spec-decode nmax6 draft=1.2B-Thinking; ~same as baseline -> do not adopt
 2026-08-11,LFM2.5-8B-A1B,llama-b10333 CPU,CPU,0.2,,,,,,,,,18.0,,INFERENCE BENCH -fa on; no gain on CPU -> do not adopt
+2026-08-11,LFM2.5-8B-A1B-Q4_K_M,llama-b10333 CPU,CPU,0.2,,,,,,,,,16.3,16.3,INFERENCE BENCH -t4 -tb8 (8-core prefill); no decode gain -> do not adopt
+2026-08-11,LFM2.5-8B-A1B-Q4_K_M,llama-b10333 CPU,CPU,0.2,,,,,,,,,16.7,16.7,INFERENCE BENCH KV q4_0 cache; flat -> do not adopt
+2026-08-11,LFM2.5-8B-A1B-Q4_K_M,llama-cpu-native,CPU,0.2,,,,,,,,,15.7,15.7,INFERENCE BENCH fresh GGML_NATIVE build (same src 0865990); no gain vs dispatch -> do not adopt

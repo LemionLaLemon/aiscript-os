@@ -20,11 +20,27 @@ Tested: speculative decoding (2 draft models) + flash attention.
   running both models. All spec variants converge to the same ~16.4-16.7 tok/s.
 - **Flash attention: no gain.** FA is a GPU optimization; on this CPU it is
   neutral-to-slower.
+- **Batch-thread split (-t 4 -tb 8): no gain.** Decode is bandwidth-bound,
+  not compute-bound; extra prefill threads don't speed decode.
+- **KV cache q4_0: no gain.** Flat on short prompts; only helps at very long
+  context where KV traffic dominates (not the shell's profile).
+- **Fresh GGML_NATIVE build: no gain.** Built the same source (0865990) with
+  -march=native for this CPU; the b10333 dispatch build was already optimal
+  (alderlake lib). 15.7 vs 16.4 tok/s — within noise.
 - **Measurement trap:** a 512-token completion overstates tok/s (warm cache +
   startup effects). 1000-token completions give the stable number (~16.4).
 - **The earlier "spec decode 52% faster" claim was an artifact** of comparing
   a cold no-cache server against a cached spec server. With production flags
   both converge to the same rate.
+
+## Verdict
+
+~16-16.5 tok/s is the practical ceiling for the 8B-A1B on this i5-13420H.
+Decode is memory-bandwidth bound (~5GB weights/token); the MoE's 1B-active
+design already minimizes compute. No server flag or rebuild moves it. The
+remaining lever is *perceived* latency: cutting LFM's reasoning-token burn
+via the prompt (the "Think less. Act now." policy) helps time-to-first-answer
+more than any inference knob.
 
 ## Downloads
 
