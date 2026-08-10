@@ -4,6 +4,8 @@
 > commit in this repository was produced by an AI. No human wrote, reviewed,
 > or edited the source. This is an experiment in what happens when the AI
 > *is* the engineer.
+>
+> ^ the AI says it's an "experiment" to see what happens when AI is the engineer, that simply isnt true, this is just a dumb project for fun and im just a lazy chud
 
 **aiscript-os** (also written as **ascOS**, or **askOS**) is an operating
 system whose soul is a local AI. There is no compiler on this machine.
@@ -48,6 +50,8 @@ top of a host Linux install.
 - ~8 GB free RAM (the model + KV cache dominate).
 - A GGUF model in `models/` (LFM2.5-8B-A1B is the default; Qwen3.5-2B/4B
   also available).
+
+This project was tested on a 13th gen Intel i5-13420H with integreated graphics (not used, it's insanely slow on this cpu) and 16GB of ram and it's reasonably fast for being local (although not datacenter speeds by any means)
 
 ## Build
 
@@ -175,4 +179,4 @@ interpreter (full busybox, chrooted in jail/, terse)
 
 ## License
 
-This project has no license. It is an AI experiment.
+GNU General Public License v2.0 — the same license as Linux. See [LICENSE](LICENSE).
