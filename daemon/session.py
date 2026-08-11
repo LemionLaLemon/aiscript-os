@@ -105,9 +105,13 @@ class Session:
                 # The model sometimes writes a tool call as plain text (e.g.
                 # `spawn(app="cowsay")`) instead of emitting a structured
                 # tool_calls response. If content contains a valid call to a
-                # known tool, execute it instead of showing the text.
-                text_call = self._extract_text_tool_call(
-                    msg.get("content") or "")
+                # known tool, execute it instead of showing the text. It can
+                # also emit a hallucinated JSON 'agent command' blob; catch
+                # that too.
+                content = msg.get("content") or ""
+                text_call = self._extract_text_tool_call(content)
+                if text_call is None:
+                    text_call = self._extract_json_command_call(content)
                 if text_call:
                     tool, args = text_call
                     msg = {"role": "assistant", "content": None,
@@ -298,6 +302,49 @@ class Session:
                 # positional: use as "value" (e.g. list(".") -> path)
                 args.setdefault("value", part.strip().strip("\"'"))
         return args
+
+    def _extract_json_command_call(self, content):
+        """Detect a hallucinated JSON 'agent command' blob like
+        {"analysis": ..., "commands": [{"keystrokes": "ls\\n", ...}], ...}
+        and turn it into a real run() call. Returns (tool, args) or None.
+        This catches the model drifting into a terminal-agent JSON format
+        instead of emitting a structured tool_calls response."""
+        if not content:
+            return None
+        # Try to find a JSON object in the content
+        start = content.find("{")
+        end = content.rfind("}")
+        if start < 0 or end <= start:
+            return None
+        blob = content[start:end + 1]
+        try:
+            data = json.loads(blob)
+        except Exception:
+            return None
+        if not isinstance(data, dict):
+            return None
+        cmds = data.get("commands") or data.get("command")
+        if not cmds:
+            return None
+        if isinstance(cmds, dict):
+            cmds = [cmds]
+        if not isinstance(cmds, list):
+            return None
+        keystrokes = []
+        for c in cmds:
+            if isinstance(c, dict):
+                ks = c.get("keystrokes") or c.get("command") or c.get("cmd")
+                if isinstance(ks, str) and ks.strip():
+                    keystrokes.append(ks.strip())
+        if not keystrokes:
+            return None
+        # Join multi-line into a single run command (newlines -> ;)
+        command = " ; ".join(
+            k.replace("\n", " ; ") for k in keystrokes if k.strip()
+        )
+        if not command:
+            return None
+        return "run", {"command": command}
 
     def _exec_tool(self, tool, args):
         try:
