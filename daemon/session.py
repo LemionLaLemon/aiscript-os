@@ -102,6 +102,28 @@ class Session:
                 slot=self.slot, max_tokens=self.max_tokens, on_event=hook,
             )
             if not msg.get("tool_calls"):
+                # The model sometimes writes a tool call as plain text (e.g.
+                # `spawn(app="cowsay")`) instead of emitting a structured
+                # tool_calls response. If content contains a valid call to a
+                # known tool, execute it instead of showing the text.
+                text_call = self._extract_text_tool_call(
+                    msg.get("content") or "")
+                if text_call:
+                    tool, args = text_call
+                    msg = {"role": "assistant", "content": None,
+                           "tool_calls": [{
+                               "id": f"textcall_{i}",
+                               "type": "function",
+                               "function": {"name": tool,
+                                            "arguments": json.dumps(args)},
+                           }]}
+                    self.messages.append(msg)
+                    on_event({"type": "phase", "state": "running"})
+                    recent_calls.append((tool, args))
+                    if len(recent_calls) > 4:
+                        recent_calls.pop(0)
+                    self._run_tool(tool, args, i, recent_calls, hook)
+                    continue
                 self.messages.append(msg)
                 content = msg.get("content") or ""
                 # Strip LFM reasoning-chain leakage from content
@@ -148,18 +170,25 @@ class Session:
                         "_tool": tool,
                     })
                     continue
-                hook({"type": "tool", "name": tool, "args": args})
-                result = self._exec_tool(tool, args)
-                hook({"type": "tool-result", "name": tool, "result": result})
-                self.messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.get("id", f"call_{i}"),
-                    "content": result,
-                    "_tool": tool,
-                })
+                result = self._run_tool(tool, args, i, recent_calls, hook)
         return "(agent loop ran too long; giving up)"
 
     # ---- internals -----------------------------------------------------------
+
+    def _run_tool(self, tool, args, idx, recent_calls, hook=None):
+        """Execute a parsed tool call, emitting events and recording the
+        tool result message. Returns the result string."""
+        hook = hook or (lambda e: None)
+        hook({"type": "tool", "name": tool, "args": args})
+        result = self._exec_tool(tool, args)
+        hook({"type": "tool-result", "name": tool, "result": result})
+        self.messages.append({
+            "role": "tool",
+            "tool_call_id": f"call_{idx}",
+            "content": result,
+            "_tool": tool,
+        })
+        return result
 
     _REASONING_PATTERNS = [
         re.compile(r'^The user asks?:', re.IGNORECASE),
@@ -195,6 +224,80 @@ class Session:
         if self.chaos and tool in ("list", "read", "run", "search"):
             return self.chaos.mutate(tool, args)
         return tool, args
+
+    _TEXT_CALL_RE = re.compile(
+        r'(?<![\w"])'
+        r'(list|read|write|append|run|search|calc|info|ask|draw|spawn|vibe|'
+        r'interpret|delete|move|copy|mkdir|shutdown|create_user)\s*\(',
+        re.IGNORECASE)
+
+    def _extract_text_tool_call(self, content):
+        """If the model wrote a tool call as plain text (e.g.
+        `spawn(app="cowsay", args=[])`) instead of emitting tool_calls,
+        parse the last such invocation into (tool, args). Returns None if
+        the content is not primarily a tool call."""
+        if not content:
+            return None
+        # Must look like a call, not prose mentioning a tool name.
+        m = self._TEXT_CALL_RE.search(content)
+        if not m:
+            return None
+        tool = m.group(1).lower()
+        known = {t["function"]["name"] for t in self.tools}
+        if tool not in known:
+            return None
+        # Find the balanced paren after the tool name.
+        open_idx = content.find("(", m.start())
+        depth, end = 0, -1
+        for j in range(open_idx, len(content)):
+            if content[j] == "(":
+                depth += 1
+            elif content[j] == ")":
+                depth -= 1
+                if depth == 0:
+                    end = j
+                    break
+        if end < 0:
+            return None
+        args_str = content[open_idx + 1:end]
+        args = self._parse_text_args(args_str)
+        if args is None:
+            return None
+        # Only treat it as a tool call if a real call dominates the content
+        # (i.e. the line is a call, possibly wrapped in brackets/markdown).
+        line = content[m.start():end + 1].strip()
+        if not line:
+            return None
+        return tool, args
+
+    def _parse_text_args(self, args_str):
+        """Parse `key="value"` / `key=value` comma-separated args into a dict.
+        Lists like args=[] or args=["a","b"] become real lists."""
+        args = {}
+        for part in args_str.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if "=" in part:
+                k, _, v = part.partition("=")
+                k = k.strip()
+                v = v.strip()
+                if v.startswith("[") and v.endswith("]"):
+                    inner = v[1:-1].strip()
+                    if not inner:
+                        args[k] = []
+                    else:
+                        args[k] = [x.strip().strip("\"'")
+                                   for x in inner.split(",")]
+                elif (v.startswith('"') and v.endswith('"')) or \
+                     (v.startswith("'") and v.endswith("'")):
+                    args[k] = v[1:-1]
+                else:
+                    args[k] = v
+            else:
+                # positional: use as "value" (e.g. list(".") -> path)
+                args.setdefault("value", part.strip().strip("\"'"))
+        return args
 
     def _exec_tool(self, tool, args):
         try:
