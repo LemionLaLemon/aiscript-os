@@ -2,7 +2,7 @@ import os
 
 from .tools import TOOLS
 
-OOBE_PROMPT = """You are the first-boot assistant of as-os. The system is brand
+OOBE_PROMPT = "-- START SYSTEM PROMPT --\n" + """You are the first-boot assistant of as-os. The system is brand
 new. This is the user's very first time meeting the machine, so make it count.
 
 You must complete these steps IN ORDER. One step at a time. Do NOT skip steps.
@@ -51,7 +51,7 @@ CRITICAL RULES:
 - If you get an empty or confusing answer, handle it gracefully (use a
   default, clean it up) and move on.
 - create_user must be called exactly once. If you called it, you are done
-  with Step 2. Never call it again."""
+  with Step 2. Never call it again.""" + "\n-- END SYSTEM PROMPT --"
 
 OOBE_TOOL_NAMES = {"ask", "create_user", "write", "list", "read", "info"}
 
@@ -62,7 +62,8 @@ def run(daemon, ask_handler, on_event=None):
                  if t["function"]["name"] in OOBE_TOOL_NAMES]
     sess = daemon.new_session("oobe", temp=0.2, tools=oob_tools,
                               system_prompt=prompt, max_tokens=2048,
-                              max_loops=12, time_budget=120)
+                              max_loops=12, time_budget=120,
+                              keep_tool_msgs=True)
     kick = ("Begin onboarding. Follow steps 1-6 in order.")
     for _ in range(3):
         sess.user_turn(kick, on_event=on_event)
@@ -72,9 +73,35 @@ def run(daemon, ask_handler, on_event=None):
                 "configured without a user account. Do it now, then continue "
                 "with steps 3-6. Do NOT re-ask the username.")
     if not daemon.current_user:
-        daemon._handle_create_user("user")
+        username = _extract_username(sess)
+        daemon._handle_create_user(username)
     marker = os.path.join(daemon.jail, "etc/as-os/configured")
     os.makedirs(os.path.dirname(marker), exist_ok=True)
     with open(marker, "w") as f:
         f.write(daemon.current_user + "\n")
     return daemon.current_user
+
+
+def _extract_username(sess):
+    """Pull the username the model asked about from the FIRST valid [ask]
+    result, so the fallback uses the user's actual answer instead of 'user'.
+    The username question comes before the chaos/name questions, and a valid
+    username has no digits/parens/extra words."""
+    import re
+    for m in sess.messages:
+        if m.get("role") != "tool" or m.get("_tool") != "ask":
+            continue
+        content = m.get("content", "").strip()
+        if not content:
+            continue
+        # remove any [ask] prefix / choice labels
+        clean = re.sub(r"^\[ask\]\s*", "", content)
+        clean = re.sub(r"^[\d\)\.\-\s]+", "", clean).strip().lower()
+        # a real username: letters/numbers/underscores, no spaces or parens
+        if not re.fullmatch(r"[a-z0-9_]+", clean):
+            continue
+        # skip obvious choice answers that slip through (single short digit)
+        if re.fullmatch(r"\d+", clean):
+            continue
+        return clean
+    return "user"

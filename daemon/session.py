@@ -13,7 +13,7 @@ class Session:
     def __init__(self, engine, executor, system_prompt, slot=0, temp=0.15,
                  chaos=None, name="session", log=None, tools=None,
                  max_tokens=None, max_loops=None, time_budget=None,
-                 layer="shell"):
+                 layer="shell", keep_tool_msgs=False):
         self.engine = engine
         self.executor = executor
         self.system_prompt = system_prompt
@@ -29,6 +29,7 @@ class Session:
         self.messages = [{"role": "system", "content": system_prompt}]
         self.layer = layer  # "shell" or "interpreter"
         self._chrooted = (layer == "interpreter")
+        self.keep_tool_msgs = keep_tool_msgs
 
     # ---- public ------------------------------------------------------------
 
@@ -43,16 +44,19 @@ class Session:
     def _request_messages(self):
         """Cache-friendly wire form of the history.
 
-        Assistant tool-call messages are dropped: llama.cpp re-tokenizes a
-        stored tool-call message differently on re-send, which breaks the
-        prompt cache and forces a full prefill on the very next request
-        (measured ~13s on the 2B). The tool RESULT is kept and tagged with
-        the tool name so the model still knows what ran.
+        Assistant tool-call messages are dropped (unless keep_tool_msgs is
+        set): llama.cpp re-tokenizes a stored tool-call message differently
+        on re-send, which breaks the prompt cache and forces a full prefill
+        on the very next request (measured ~13s on the 2B). The tool RESULT
+        is kept and tagged with the tool name so the model still knows what
+        ran. Sessions that need the model to see its own prior actions
+        (e.g. OOBE) pass keep_tool_msgs=True and eat the cache cost.
         """
         out = []
         for m in self.messages:
             if m["role"] == "assistant" and m.get("tool_calls"):
-                continue
+                if not self.keep_tool_msgs:
+                    continue
             if m["role"] == "tool":
                 nm = dict(m)
                 name = m.get("_tool")

@@ -215,6 +215,9 @@ class Shell:
             if line == "pkgs":
                 self._pkgs()
                 continue
+            # bare word matching an installed app/package -> spawn directly
+            if self._try_app_spawn(line):
+                continue
 
             streamed = [False]
             stop = threading.Event()
@@ -296,6 +299,22 @@ class Shell:
             print("available apps:\n" + "\n".join(found))
         else:
             print("no apps installed. try: vibe install <something>")
+
+    def _try_app_spawn(self, line):
+        """If the user typed a bare word that names an installed app/package,
+        spawn it directly (deterministic, no model guesswork). Returns True
+        if handled."""
+        word = line.strip()
+        if not word or any(c in word for c in " /"):
+            return False
+        try:
+            path = self.daemon._resolve_app(word)
+        except Exception:
+            return False
+        self._write(f"\033[32mspawn {word}...\033[0m\n")
+        result = self.daemon._handle_spawn(word, [])
+        print(result)
+        return True
 
     def _pkgs(self):
         result = self.daemon._handle_vibe(None, "list", [])

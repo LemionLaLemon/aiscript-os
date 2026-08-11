@@ -282,6 +282,25 @@ _SHELL_TOOL_SCHEMAS = [
             "parameters": {"type": "object", "properties": {}},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_user",
+            "description": "Create a user account and its home directory "
+                           "(Downloads, Documents, .asrc). Only used during "
+                           "first-boot setup.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "username": {"type": "string",
+                                 "description": "the login name (letters, "
+                                                "numbers, underscores only)"},
+                    "password": {"type": "string"},
+                },
+                "required": ["username"],
+            },
+        },
+    },
 ]
 
 _INTERPRETER_TOOL_SCHEMAS = [

@@ -3,52 +3,53 @@ import re
 
 from daemon.tools import INTERPRETER_TOOLS
 
-VIBE_TASK = """You are the vibecoder. Your mission: breathe life into a brand-new
-aiscript package named '{target}'.
+VIBE_TASK = """-- START SYSTEM PROMPT --
+You are the vibecoder. Your mission: breathe life into a brand-new aiscript
+package named '{target}'.
 
 Directory packages/{target}/ already exists in the system root. Put everything
-there. You may only ever write inside that directory. Use relative paths from the
-system root (e.g. write path "packages/{target}/{target}.as"). Do NOT try
+there. You may only ever write inside that directory. Use relative paths from
+the system root (e.g. write path "packages/{target}/{target}.as"). Do NOT try
 to create the directory — it already exists. Do not explore; go straight to
 work.
 
 IMPORTANT — what aiscript actually is:
-aiscript has NO strict syntax. It is a wish written down for an AI interpreter
-to read and carry out. Your {target}.as file must be a short, plain-language
-intent description, NOT code. Never write function defs, variable assignments,
-args tables, for-loops, conditionals, or any Python/Lua-style syntax. Write it
-like an instruction note to another AI.
+aiscript is interpreted by an AI. It has no strict syntax. A .as file has TWO
+sections:
 
-A REAL EXAMPLE from this system (du-sort.as):
-  # du-sort: list the heaviest files in the home Downloads folder
-  # (aiscript is interpreted by an AI, so this is a wish, not syntax)
+  1. SYSTEM PROMPT SECTION (REQUIRED): a short description of what the program
+     does, so the interpreter knows its purpose.
+  2. --- program --- SECTION (OPTIONAL): the program's real logic and assets.
+     This can be actual code (Python-style or any style), data, ASCII art,
+     templates — whatever the program needs. Code is ENCOURAGED here when the
+     package needs real behavior; the interpreter reads and executes it.
 
-  list the 12 biggest files in ~/Downloads, sorted by size, biggest first,
-  and tell me which ones are taking up the most room
+REAL EXAMPLE (cowsay):
+  # cowsay: make a cow say a message
+  # given a message, show it in a speech bubble above an ASCII cow
+
+  --- program ---
+  COW = [
+      "        \\   ^__^",
+      "         \\  (oo)\\_______",
+      "            (__)\\       )\\/\\",
+      "                ||----w |",
+      "                ||     ||",
+  ]
+
+  when spawned: take the message from the first argument (or ask the user),
+  wrap it in a speech bubble, then print the cow below the bubble.
 
 WHAT YOUR FILE MUST LOOK LIKE:
-  - 1-2 comment lines naming what {target} is
-  - 1-4 plain sentences describing exactly what it should do when spawned,
-    using only the user's files and system info
-  - if it takes arguments, say so in plain words (e.g. "if given a path
-    argument, show the files under that path")
-  - if it is interactive, say so (e.g. "after showing the file, ask the user
-    what they want to change and at which line")
-
-BAD — DO NOT WRITE THIS (it is Python, not aiscript):
-  args = {{}}
-  for arg in args:
-    if arg == "-v":
-      args["verbose"] = True
-  print("Error: No URL specified")
-  import sys
-  def main():
-    ...
-
-GOOD — aiscript is plain language:
-  # du-sort: list the heaviest files in the home Downloads folder
-  list the 12 biggest files in ~/Downloads, sorted by size, biggest first,
-  and tell me which ones are taking up the most room
+  - Start with 1-2 comment lines: "# {target}: <one-line description>"
+  - Add 1-4 plain sentences describing what it does when spawned, using only
+    the user's files and system info.
+  - If it takes arguments, say so in plain words (e.g. "if given a path
+    argument, show the files under that path").
+  - If it is interactive, say so (e.g. "after showing the file, ask the user
+    what they want to change and at which line").
+  - Add a "--- program ---" section with real logic/assets when the package
+    needs behavior beyond simple reporting. Actual code is fine and welcome.
 
   Then write packages/{target}/{target}.aconf — a manifest with lines like:
      name = "{target}"
@@ -58,28 +59,44 @@ GOOD — aiscript is plain language:
 Use list/read to check your work once, then fix anything obviously wrong.
 Finish with a one-line summary of what you built.
 
-Do not edit anything outside packages/{target}/."""
+MANDATORY: your {target}.as file MUST contain a "--- program ---" section
+with real content — actual code, data, or assets that make the program do
+something. A description alone is a failed install and will be rejected.
+The whole point is that the program CAN RUN. If {target} has behavior
+(say something, list something, calculate something, draw something), the
+program section must implement that behavior in concrete code or data.
+NEVER stop after just writing the description — always write the program
+section too.
+
+WORK STYLE: Do NOT narrate a plan. Do NOT write "analysis" or "plan"
+sections. Do NOT list the steps you will take. Go straight to writing:
+use the write tool on packages/{target}/{target}.as, then write
+packages/{target}/{target}.aconf. Two writes, done. If you need to check,
+one list or read at most. Think with your tools, not with your words.
+
+Do not edit anything outside packages/{target}/.
+-- END SYSTEM PROMPT --"""
 
 
 def _validate_as_file(path):
-    """Return an error string if the .as file contains code syntax, or None if OK."""
+    """Return an error string if the .as file is a stub/header-only, else None."""
     if not os.path.isfile(path):
         return f"missing {os.path.basename(path)}"
     with open(path) as f:
         src = f.read()
-    bad_markers = [
-        (r'^\s*def\s+\w+\s*\(', "function definition"),
-        (r'^\s*for\s+\w+\s+in\s+', "for-loop"),
-        (r'^\s*import\s+', "import statement"),
-        (r'^\s*args\s*=\s*\{', "args dict"),
-        (r'\bprint\s*\(', "print() call"),
-        (r'^\s*if\s+__name__', "main guard"),
-        (r'^\s*class\s+\w+', "class definition"),
-        (r'^\s*return\s+', "return statement"),
-    ]
-    for pat, label in bad_markers:
-        if re.search(pat, src, re.MULTILINE):
-            return f"file contains {label} — aiscript must be plain language, not code"
+
+    # (a) must have a "# <name>:" header line
+    if not re.search(r'^#\s*\S+\s*:', src, re.MULTILINE):
+        return "missing the required '# <name>: description' header line"
+
+    # (b) must not be a stub: at least 3 non-empty lines, OR a program section
+    body = [ln for ln in src.splitlines() if ln.strip()]
+    has_program = "--- program ---" in src
+    if not has_program and len(body) < 3:
+        return (
+            "file is only a stub (a description with no body or program "
+            "section). Give it real content."
+        )
     return None
 
 
@@ -124,10 +141,14 @@ def _install(daemon, pkgs, target, action, flags):
     os.makedirs(pkg_dir, exist_ok=True)
 
     sub = daemon.new_session(
-        f"vibe:{target}", tools=_vibe_tools(), temp=0.25, max_loops=24,
-        max_tokens=4096, time_budget=600, layer="interpreter",
+        f"vibe:{target}", system_prompt=VIBE_TASK.format(target=target),
+        tools=_vibe_tools(), temp=0.25, max_loops=24,
+        max_tokens=4096, time_budget=900, layer="interpreter",
     )
-    result = sub.user_turn(VIBE_TASK.format(target=target))
+    result = sub.user_turn(
+        f"Vibecode the '{target}' package now. Write packages/{target}/"
+        f"{target}.as and packages/{target}/{target}.aconf."
+    )
     sub.reset()
 
     manifest = os.path.join(pkg_dir, f"{target}.aconf")
@@ -142,15 +163,20 @@ def _install(daemon, pkgs, target, action, flags):
             f"{target}.aconf). {result}"
         )
 
-    # Validate the .as file isn't code
+    # Validate the .as file isn't a stub
     err = _validate_as_file(entry)
     if err:
-        import shutil
-        shutil.rmtree(pkg_dir)
-        return (
-            f"vibe produced invalid aiscript for {target}: {err}. "
-            f"Try again — aiscript is plain language, not code."
-        )
+        # auto-retry once with a stronger kick
+        result2 = _retry_vibecode(daemon, sub, pkg_dir, target, result, err)
+        err = _validate_as_file(entry)
+        if err:
+            import shutil
+            shutil.rmtree(pkg_dir)
+            return (
+                f"vibe produced a bad {target}.as after a retry: {err}. "
+                f"{result2}"
+            )
+        result = result2
 
     warning = ""
     if os.path.exists(entry):
@@ -167,6 +193,28 @@ def _install(daemon, pkgs, target, action, flags):
         f"package '{target}' vibecoded and installed. spawn {target} to run "
         f"it. summary: {result[-300:]}{warning}"
     )
+
+
+def _retry_vibecode(daemon, sub, pkg_dir, target, result, err):
+    """One corrective retry: tell the vibecoder its file was rejected and why,
+    then let it fix the file in place."""
+    # recreate the sub-session (previous one was reset)
+    sub2 = daemon.new_session(
+        f"vibe:{target}-retry", system_prompt=VIBE_TASK.format(target=target),
+        tools=_vibe_tools(), temp=0.3, max_loops=24,
+        max_tokens=4096, time_budget=900, layer="interpreter",
+    )
+    kick = (
+        f"Your previous vibe of '{target}' was rejected: {err}. "
+        f"The packages/{target}/ directory still exists. Rewrite "
+        f"packages/{target}/{target}.as so it passes: it MUST have the "
+        f"'# {target}: description' header AND a '--- program ---' section "
+        f"with real logic/assets. Also ensure packages/{target}/{target}.aconf "
+        f"exists. Do it now."
+    )
+    result2 = sub2.user_turn(kick)
+    sub2.reset()
+    return result2
 
 
 def _list_packages(pkgs):

@@ -58,6 +58,8 @@ def run_file(session, path, args=None, on_event=None):
         f"<arguments: {args_repr or 'none'}>\n"
         f"{src}\n"
         f"--- end of app ---\n"
+        f"If the app has a '--- program ---' section, everything below that "
+        f"line is the program's logic/assets — use it. "
         f"Carry out that wish now, then report the result briefly."
     )
     return session.continue_turn(program, on_event=on_event)
