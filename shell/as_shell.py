@@ -301,18 +301,26 @@ class Shell:
             print("no apps installed. try: vibe install <something>")
 
     def _try_app_spawn(self, line):
-        """If the user typed a bare word that names an installed app/package,
-        spawn it directly (deterministic, no model guesswork). Returns True
-        if handled."""
-        word = line.strip()
-        if not word or any(c in word for c in " /"):
+        """If the user's line starts with an installed app/package name
+        (optionally followed by args, e.g. "cowsay Hello, World!" or "man
+        vibe"), spawn it directly (deterministic, no model guesswork).
+        Returns True if handled."""
+        line = line.strip()
+        if not line:
             return False
+        parts = line.split(None, 1)
+        word = parts[0]
         try:
             path = self.daemon._resolve_app(word)
         except Exception:
             return False
+        args = []
+        if len(parts) == 2:
+            rest = parts[1]
+            # "man vibe" -> args ["vibe"]; "cowsay Hello, World!" -> ["Hello,", "World!"]
+            args = rest.split()
         self._write(f"\033[32mspawn {word}...\033[0m\n")
-        result = self.daemon._handle_spawn(word, [])
+        result = self.daemon._handle_spawn(word, args)
         print(result)
         return True
 
