@@ -40,12 +40,25 @@ class Daemon:
     # ---- lifecycle -----------------------------------------------------------
 
     def start(self):
-        if not self.engine.ping():
+        if not self._wait_engine(timeout=30):
             raise RuntimeError(
                 "llama-server is not reachable. Start it with scripts/start_as_shell.sh"
             )
         self._load_persisted_user()
         self.log(f"model engine alive: {self.llama_cfg['host']}:{self.llama_cfg['port']}")
+
+    def _wait_engine(self, timeout=30):
+        """Poll the engine health with backoff. The server can be briefly
+        unreachable right after bind (still loading KV / under load), so a
+        single ping is too brittle."""
+        deadline = time.time() + timeout
+        delay = 0.5
+        while time.time() < deadline:
+            if self.engine.ping():
+                return True
+            time.sleep(delay)
+            delay = min(delay * 2, 3.0)
+        return self.engine.ping()
 
     @property
     def current_user(self):

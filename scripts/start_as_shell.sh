@@ -29,8 +29,9 @@ if ! curl -s --max-time 2 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
     exit 1
 fi
 
-# Give the server an extra second to fully initialize
-sleep 1
+# Give the server time to fully initialize (KV cache, backend warm-up).
+# The daemon also retries its ping, so this is belt-and-braces.
+sleep 2
 
 # Launch the shell
 echo "launching as# shell..."
