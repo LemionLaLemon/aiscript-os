@@ -35,12 +35,37 @@ Tested: speculative decoding (2 draft models) + flash attention.
 
 ## Verdict
 
-~16-16.5 tok/s is the practical ceiling for the 8B-A1B on this i5-13420H.
-Decode is memory-bandwidth bound (~5GB weights/token); the MoE's 1B-active
-design already minimizes compute. No server flag or rebuild moves it. The
-remaining lever is *perceived* latency: cutting LFM's reasoning-token burn
+~16-18 tok/s is the practical ceiling for the 8B-A1B on this i5-13420H.
+Decode is memory-latency bound for the scattered MoE expert reads — NOT
+bandwidth-bound, NOT power-bound, NOT thread-limited. This was verified by
+elimination (see below).
+
+## Root cause (corrected, round 3)
+
+Memory hardware verified: **2x 8GB DDR5-4800 dual-channel (Kingston + Samsung)**,
+~77 GB/s theoretical, ~50 GB/s realistic. At 16-17 tok/s x ~670MB/token active
+the *effective* bandwidth used is ~11 GB/s — only ~20% of realistic. So the
+machine is NOT bandwidth-saturated.
+
+What actually limits decode:
+- **~19W power draw** during inference (measured via RAPL energy_uj) — far
+  below the 45W PL1. CPU is voluntarily at 3.0GHz, stalled waiting on DRAM.
+- **Thread sweep flat**: -t 8 (all P+E) = 17.0, -t 12 (all) = 15.1 (worse,
+  HT contention). Not latency-hiding limited.
+- **PL1 raised 45W->75W: flat.** CPU still 3.0GHz. Not power-limited.
+- **mlock: flat.** Model already resident; not page-cache misses.
+- **Start-of-run burst:** llama-server's tg_3s shows ~35 tok/s for the first
+  ~400 tokens (experts hot in cache), then settles to ~17 tok/s cold DRAM
+  latency. That 35 t/s burst is why the original bench rows report 33.7.
+
+Conclusion: the 8B-A1B's active ~1B experts are read via scattered/random
+access each token. Random DRAM access latency at ~3GHz with 4 P-cores caps
+decode at ~17 tok/s. No server flag, thread count, power limit, or rebuild
+changes this — it's the memory-access pattern.
+
+The remaining lever is perceived latency: cutting LFM's reasoning-token burn
 via the prompt (the "Think less. Act now." policy) helps time-to-first-answer
-more than any inference knob.
+more than any inference knob. (PL1 was restored to the 45W firmware default.)
 
 ## Downloads
 

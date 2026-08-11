@@ -13,3 +13,7 @@ date,model,build,backend,temp,bench_tools_raw,bench_tools_valid,reliability,rel_
 2026-08-11,LFM2.5-8B-A1B-Q4_K_M,llama-b10333 CPU,CPU,0.2,,,,,,,,,16.3,16.3,INFERENCE BENCH -t4 -tb8 (8-core prefill); no decode gain -> do not adopt
 2026-08-11,LFM2.5-8B-A1B-Q4_K_M,llama-b10333 CPU,CPU,0.2,,,,,,,,,16.7,16.7,INFERENCE BENCH KV q4_0 cache; flat -> do not adopt
 2026-08-11,LFM2.5-8B-A1B-Q4_K_M,llama-cpu-native,CPU,0.2,,,,,,,,,15.7,15.7,INFERENCE BENCH fresh GGML_NATIVE build (same src 0865990); no gain vs dispatch -> do not adopt
+2026-08-11,LFM2.5-8B-A1B-Q4_K_M,llama-b10333 CPU,CPU,0.2,,,,,,,,,17.0,17.0,INFERENCE BENCH -t8 all cores: flat (17.0); not latency-hiding bound
+2026-08-11,LFM2.5-8B-A1B-Q4_K_M,llama-b10333 CPU,CPU,0.2,,,,,,,,,15.1,15.1,INFERENCE BENCH -t12 all threads: WORSE (HT contention) -> do not adopt
+2026-08-11,LFM2.5-8B-A1B-Q4_K_M,llama-b10333 CPU,CPU,0.2,,,,,,,,,18.3,18.3,INFERENCE BENCH load-mode=mlock: flat; not page-cache bound
+2026-08-11,LFM2.5-8B-A1B-Q4_K_M,llama-b10333 CPU,CPU,0.2,,,,,,,,,17.0,17.0,INFERENCE BENCH PL1 raised 45->75W: flat (3.0GHz, 19W draw); NOT power bound
