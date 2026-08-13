@@ -73,9 +73,21 @@ log "starting the engine"
 export LD_LIBRARY_PATH=/opt/as-os/tools/llama.cpp/llama-b10333
 MODEL=$(cat "$MODEL_FILE" 2>/dev/null || echo "LFM2.5-8B-A1B-Q4_K_M.gguf")
 PORT=8080
+
+# Engine sizing is read from /data/jail/etc/as-os/engine.conf so a lean VM
+# (or a beefy machine) can tune how much RAM the model takes. The 8B model
+# alone is ~9 GB RSS at 4 slots x 8192 ctx; at 2 slots x 4096 it drops to
+# ~5 GB. Lines: SLOTS=n, CTX=n, THREADS=n, MASK=cpus.
+ENGINE_CONF=/data/jail/etc/as-os/engine.conf
 SLOTS=4
+CTX=8192
 THREADS=4
 MASK=0,2,4,6
+if [ -e "$ENGINE_CONF" ]; then
+    . "$ENGINE_CONF"
+fi
+
+log "engine config: slots=$SLOTS ctx=$CTX threads=$THREADS mask=$MASK"
 # CRITICAL: llama-server dlopens its CPU backend .so files RELATIVE TO CWD.
 # It must run with cwd == the bin dir or it fails with "no backends are
 # loaded". Do NOT change this.
@@ -84,7 +96,7 @@ cd /opt/as-os/tools/llama.cpp/llama-b10333
 # exactly why it fails (don't --log-disable here — VM debugging needs it).
 taskset -c "$MASK" ./llama-server \
     -m "/opt/as-os/models/$MODEL" \
-    -c $((8192 * SLOTS)) \
+    -c $((CTX * SLOTS)) \
     -t "$THREADS" \
     --parallel "$SLOTS" \
     -ctk q8_0 -ctv q8_0 \

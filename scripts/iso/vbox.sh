@@ -1,6 +1,8 @@
 # ascOS VirtualBox VM provisioning.
 #   - create the VM if missing, else update its settings
-#   - RAM: default 12 GB (the 8B model needs ~9 GB RSS; 1.2B fits in 4 GB)
+#   - RAM: default 12288 MB (12 GB). The 8B model needs ~9 GB RSS inside the
+#     VM; on a 15 GB host that leaves little room, so 10-11 GB is the sweet
+#     spot (the 1.2B model fits in 4 GB). Override with VBOX_RAM.
 #   - cores = min(16, host logical CPUs)
 #   - attach the ISO to the optical drive and the data VDI to SATA
 #   - boot order: optical first, then disk
