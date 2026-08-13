@@ -5,7 +5,9 @@
 #   make rootfs       only build the stripped rootfs (fast iteration)
 #   make squashfs     rebuild build/staging/boot/root.squashfs from rootfs
 #   make initramfs    rebuild the stage-1 initramfs
+#   make seed         build build/seed (data partition contents)
 #   make data-disk    create a bootable data disk image (root.squashfs inside)
+#   make usb DEV=/dev/sdX   flash ascOS onto a USB drive (UEFI, destructive)
 #   make test         boot the ISO + data disk in QEMU (software emulation:
 #                     slow model load — see make vbox for a fast VM)
 #   make vbox         convert the data disk to a .vdi for VirtualBox and
@@ -20,7 +22,7 @@ SUDO ?= sudo
 PY ?= python3
 
 .DEFAULT_GOAL := iso
-.PHONY: iso rootfs strip squashfs initramfs data-disk test vbox clean
+.PHONY: iso rootfs strip squashfs initramfs seed data-disk test vbox usb clean
 
 iso: build/ascOS.iso
 
@@ -63,9 +65,15 @@ build/staging/boot/vmlinuz-linux: build/rootfs
 
 # ---- data partition -----------------------------------------------------------
 
+seed: build/seed
+
+build/seed: essential/*/*.as essential/*/*.aconf scripts/iso/mkseed.sh
+	mkdir -p build
+	bash scripts/iso/mkseed.sh
+
 data-disk: build/data-disk.img
 
-build/data-disk.img: build/staging/boot/root.squashfs
+build/data-disk.img: build/staging/boot/root.squashfs build/seed
 	$(SUDO) bash scripts/iso/mkdata.sh $@ build/staging/boot/root.squashfs
 
 # ---- test ---------------------------------------------------------------------
@@ -90,7 +98,13 @@ vbox: build/ascOS.iso build/data-disk.img
 	@echo "==> provisioning the VirtualBox VM (no sudo — VBox is per-user)..."
 	bash scripts/iso/vbox.sh
 
+# ---- flash to USB ---------------------------------------------------------------
+
+# make usb DEV=/dev/sdX  — write ascOS to a USB drive (UEFI). DESTROYS the device.
+usb: build/ascOS.iso build/seed
+	$(SUDO) bash scripts/iso/flash.sh $(DEV)
+
 # ---- clean --------------------------------------------------------------------
 
 clean:
-	rm -rf build/staging build/ascOS.iso build/data-disk.img build/initramfs
+	rm -rf build/staging build/ascOS.iso build/data-disk.img build/initramfs build/seed

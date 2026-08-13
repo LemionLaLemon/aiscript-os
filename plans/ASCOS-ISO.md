@@ -82,5 +82,21 @@ Fastest viable: minimal pacstrap (Arch) rootfs, stripped to bare minimum.
 ## Build system
 
 `make iso` (full), `make rootfs`, `make squashfs`, `make initramfs`,
-`make data-disk`, `make test` (QEMU), `make clean`. Root required.
+`make seed`, `make data-disk`, `make usb DEV=/dev/sdX` (flash to USB, UEFI),
+`make test` (QEMU), `make clean`. Root required.
+
+## Installing on hardware
+
+There is no in-OS installer (and the AI shell can't do disk ops — it's
+chrooted by design). Two paths:
+- Host-side flash utility: `make usb DEV=/dev/sdX` — GPT partition (ESP
+  FAT32 + ext4 ascdata), copy squashfs+seed, install GRUB UEFI. Verified
+  working on a real 28.6G USB.
+- (Planned) on-device install mode: a GRUB menu entry / kernel arg that runs
+  a partitioner before as# launches — how real distros install from the live
+  image. Not yet built.
+
+UEFI note: the USB must boot via the EFI path (BOOTX64.EFI on the ESP);
+BIOS-only GRUB won't show on UEFI systems without CSM. Secure Boot must be
+off (unsigned GRUB).
 
