@@ -8,6 +8,12 @@
 set -euo pipefail
 ROOT="$(pwd)"
 DEV="${1:?usage: flash.sh /dev/sdX}"
+FORCE=0
+for arg in "$@"; do
+    case "$arg" in
+        --yes|-y|FORCE=1) FORCE=1 ;;
+    esac
+done
 ISO="$ROOT/build/staging"
 SEED="$ROOT/build/seed"
 
@@ -34,14 +40,14 @@ done
 echo ""
 echo "!!! This DESTROYS everything on $DEV !!!"
 lsblk -o NAME,SIZE,MODEL "$DEV" 2>/dev/null
-if [ "${FORCE:-0}" != "1" ]; then
+if [ "$FORCE" != "1" ]; then
     read -r -p "Type the device path again to confirm: " CONFIRM
     if [ "$CONFIRM" != "$DEV" ]; then
         echo "aborted."
         exit 1
     fi
 else
-    echo "(FORCE=1 — skipping confirmation)"
+    echo "(--yes — skipping confirmation)"
 fi
 
 # ---- artifacts present? -----------------------------------------------------
