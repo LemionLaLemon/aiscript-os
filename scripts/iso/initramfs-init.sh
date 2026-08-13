@@ -16,9 +16,13 @@ mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
 mkdir -p /dev/pts /mnt /mntroot
 mount -t devpts devpts /dev/pts 2>/dev/null || true
 
-say "stage1: loading root filesystem modules..."
-for m in /lib/modules/loop.ko /lib/modules/squashfs.ko /lib/squashfs.ko; do
-    [ -e "$m" ] && insmod "$m" 2>/dev/null
+say "stage1: loading modules..."
+for m in /lib/modules/loop.ko /lib/modules/squashfs.ko \
+         /lib/modules/usb-storage.ko /lib/modules/uas.ko; do
+    if [ -e "$m" ]; then
+        say "  insmod $(basename "$m")"
+        insmod "$m" 2>/dev/null || say "  (insmod $(basename "$m") failed)"
+    fi
 done
 # make sure loop devices exist
 mknod /dev/loop0 b 7 0 2>/dev/null || true
@@ -26,20 +30,36 @@ mknod /dev/loop-control c 10 237 2>/dev/null || true
 
 say "stage1: locating data partition..."
 DATA_SRC=""
-for dev in /dev/vda1 /dev/vda2 /dev/sda1 /dev/sda2 /dev/sdb1 /dev/vdb1 /dev/sr0; do
-    if [ -b "$dev" ]; then
-        say "stage1: trying $dev"
+
+# USB/SCSI devices enumerate asynchronously — wait for them to appear.
+# Also trigger a rescan of SCSI so late-plugged disks show up.
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    for h in /sys/class/scsi_host/host*/scan; do
+        [ -e "$h" ] && echo "- - -" > "$h" 2>/dev/null
+    done
+    # scan every block partition for an ext4 filesystem holding root.squashfs
+    for part in /sys/class/block/*[0-9]; do
+        dev="/dev/$(basename "$part")"
+        [ -b "$dev" ] || continue
+        # skip the boot ESP (vfat) and swap — we want ext4 with root.squashfs
         if mount -t ext4 "$dev" /mnt 2>/dev/null; then
-            DATA_SRC="$dev"
-            say "stage1: mounted $dev"
-            break
+            if [ -e /mnt/root.squashfs ]; then
+                DATA_SRC="$dev"
+                say "stage1: found data partition: $dev"
+                break 2
+            fi
+            umount /mnt 2>/dev/null || true
         fi
-    fi
+    done
+    [ -n "$DATA_SRC" ] && break
+    sleep 1
 done
 
 if [ -z "$DATA_SRC" ]; then
-    say "FATAL: cannot find data partition (looked for vda/sda/sdb)."
-    say "Is the data disk attached? It must contain root.squashfs."
+    say "FATAL: cannot find data partition (ext4 with root.squashfs)."
+    say "Block devices present:"
+    ls /dev/sd* /dev/vd* /dev/sr* 2>/dev/null || say "  (none)"
+    say "Is the data disk attached?"
     sleep 10
     echo b > /proc/sysrq-trigger
     exit 1

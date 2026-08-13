@@ -18,9 +18,10 @@ for applet in mount umount insmod sleep echo cat grep readlink switch_root mkdir
 done
 
 echo "==> decompressing kernel modules into initramfs..."
-for mod in squashfs loop; do
-    M=$(echo "$R"/usr/lib/modules/*/kernel/*/*/"$mod".ko.zst 2>/dev/null | tr ' ' '\n' | head -1)
-    [ -e "$M" ] || M=$(find "$R"/usr/lib/modules -name "$mod.ko.zst" 2>/dev/null | head -1)
+# squashfs + loop = mount the root image. usb-storage + uas = expose USB
+# disks (the data partition lives on the USB). scsi/sd are kernel-builtin.
+for mod in squashfs loop usb-storage uas; do
+    M=$(find "$R"/usr/lib/modules -name "$mod.ko.zst" 2>/dev/null | head -1)
     if [ -e "$M" ]; then
         zstd -d -f -q "$M" -o "$INITRAMFS/lib/modules/$mod.ko"
         echo "$mod.ko: $(du -h "$INITRAMFS/lib/modules/$mod.ko" | cut -f1)"
