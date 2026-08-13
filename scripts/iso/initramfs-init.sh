@@ -5,13 +5,18 @@
 
 export PATH=/bin:/usr/bin:/sbin
 
+# Boot log — mirrored to the data partition once it's found, so it survives
+# and can be read from the host by mounting the data disk.
+BOOTLOG=/dev/console
+say() { echo "ascOS: $*"; }
+
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
 mkdir -p /dev/pts /mnt /mntroot
 mount -t devpts devpts /dev/pts 2>/dev/null || true
 
-echo "ascOS stage1: loading root filesystem modules..."
+say "stage1: loading root filesystem modules..."
 for m in /lib/modules/loop.ko /lib/modules/squashfs.ko /lib/squashfs.ko; do
     [ -e "$m" ] && insmod "$m" 2>/dev/null
 done
@@ -19,27 +24,34 @@ done
 mknod /dev/loop0 b 7 0 2>/dev/null || true
 mknod /dev/loop-control c 10 237 2>/dev/null || true
 
-echo "ascOS stage1: locating data partition..."
+say "stage1: locating data partition..."
 DATA_SRC=""
 for dev in /dev/vda1 /dev/vda2 /dev/sda1 /dev/sda2 /dev/sdb1 /dev/vdb1 /dev/sr0; do
     if [ -b "$dev" ]; then
+        say "stage1: trying $dev"
         if mount -t ext4 "$dev" /mnt 2>/dev/null; then
             DATA_SRC="$dev"
+            say "stage1: mounted $dev"
             break
         fi
     fi
 done
 
 if [ -z "$DATA_SRC" ]; then
-    echo "ascOS: cannot find data partition. panic (rebooting in 10s)"
+    say "FATAL: cannot find data partition (looked for vda/sda/sdb)."
+    say "Is the data disk attached? It must contain root.squashfs."
     sleep 10
     echo b > /proc/sysrq-trigger
     exit 1
 fi
-echo "ascOS stage1: data = $DATA_SRC"
+
+# persist boot log on the data partition
+if [ -w /mnt ]; then
+    echo "--- ascOS boot log ---" >> /mnt/boot.log 2>/dev/null || true
+fi
 
 if [ -e /mnt/root.squashfs ]; then
-    echo "ascOS stage1: mounting root image..."
+    say "stage1: mounting root image..."
     # attach the squashfs file to a loop device explicitly, then mount
     losetup /dev/loop0 /mnt/root.squashfs 2>/dev/null || \
         losetup -f /mnt/root.squashfs 2>/dev/null || true
@@ -50,10 +62,11 @@ if [ -e /mnt/root.squashfs ]; then
     mount --move /proc /mntroot/proc 2>/dev/null || true
     mount --move /sys /mntroot/sys 2>/dev/null || true
     mount --move /dev /mntroot/dev 2>/dev/null || true
+    say "stage1: switching root"
     exec switch_root /mntroot /sbin/init
 fi
 
-echo "ascOS stage1: no root.squashfs on data partition. panic (rebooting in 10s)"
+say "FATAL: no root.squashfs on data partition."
 sleep 10
 echo b > /proc/sysrq-trigger
 exit 1
