@@ -33,6 +33,15 @@ def _detect_repetition(content, recent, window=200):
     # also flag a repeating character pattern (e.g. the same line twice)
     if len(lines) >= 4 and len(unique) * 2 <= len(lines):
         return True
+    # Block repetition: a long content line repeats at intervals with short
+    # separator lines (e.g. "...ANSWER\\n</think>\\n" wedged between repeats
+    # of the real sentence). Count how often any long line repeats.
+    long_lines = [l for l in lines if len(l) >= 15]
+    if len(long_lines) >= 3:
+        from collections import Counter
+        counts = Counter(long_lines)
+        if counts.most_common(1)[0][1] >= 3:
+            return True
     return False
 
 
@@ -42,15 +51,13 @@ def _trim_repetition(content, window=200):
     if not content:
         return content
     lines = content.splitlines(keepends=True)
-    # walk from the start; find the first point where a short run of lines
-    # repeats ≥3 times consecutively, and drop everything from there.
+    # (1) exact consecutive chunk repetition (3+ identical 3-line chunks)
     n = len(lines)
     for i in range(n - 3):
         chunk = lines[i:i + 3]
         joined = "".join(chunk)
         if len(joined) < 4:
             continue
-        # look ahead for the same 3-line chunk repeating
         repeat = 0
         j = i + 3
         while j + 3 <= n and "".join(lines[j:j + 3]) == joined:
@@ -58,7 +65,44 @@ def _trim_repetition(content, window=200):
             j += 3
         if repeat >= 3:
             return "".join(lines[:i]).rstrip()
+    # (2) block repetition: a long content line appears 3+ times with short
+    # separator lines between (e.g. "...?ANSWER\n</think>\n" wedged between
+    # repeats). Keep the FIRST occurrence of the line (the real answer) and
+    # cut from the second occurrence onward.
+    from collections import Counter
+    text_lines = [ln for ln in lines if ln.strip()]
+    long_lines = [ln for ln in text_lines if len(ln.strip()) >= 15]
+    if len(long_lines) >= 3:
+        counts = Counter(long_lines)
+        top = counts.most_common(1)[0]
+        if top[1] >= 3:
+            cut = top[0].strip()
+            seen = 0
+            for idx, ln in enumerate(lines):
+                if ln.strip() == cut:
+                    seen += 1
+                    if seen == 2:
+                        # keep through the first occurrence (end of that line)
+                        kept = "".join(lines[:idx]).rstrip()
+                        return _strip_tail_markers(kept)
     return content
+
+
+def _strip_tail_markers(text):
+    """Remove reasoning/repetition markers that leak onto the tail of an
+    answer: 'ANSWER', '</think>', '```', stray separators."""
+    import re as _re
+    t = text
+    prev = None
+    while prev != t:
+        prev = t
+        # 'ANSWER' glued to the end of the last word (e.g. "...?ANSWER")
+        t = _re.sub(r"(?i)answer$", "", t)
+        t = t.replace("</think>", "")
+        t = _re.sub(r"(?m)^\s*answer\s*$", "", t)
+        t = _re.sub(r"\n{3,}", "\n\n", t)
+        t = t.rstrip()
+    return t
 
 
 class ModelError(Exception):
