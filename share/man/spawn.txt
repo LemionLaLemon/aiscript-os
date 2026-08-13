@@ -1,0 +1,27 @@
+SPAWN(1)                          as-os                          SPAWN(1)
+
+NAME
+  spawn - run an aiscript app in its own sub-session
+
+USAGE
+  spawn <app> [args...]
+
+DESCRIPTION
+  spawn runs an installed app or package in a fresh interpreter sub-session.
+  The app's .as source is streamed to the interpreter, which carries out the
+  wish and reports back.
+
+  Apps live in /apps; packages live in /packages (installed by vibe).
+
+EXAMPLES
+  spawn notepad Documents/notes.txt   open notes in the interactive editor
+  spawn sysinfo                       show system info
+  spawn cowsay "hello"                make a cow say hello
+  spawn man vibe                      read the vibe manual
+
+  The shell (kernel-2) also uses spawn: when the user types a bare word that
+  matches an installed app or package, it spawns it immediately.
+
+NOTES
+  Interactive apps (like notepad) can ask the user questions mid-run via the
+  ask tool.

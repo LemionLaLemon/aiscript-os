@@ -1,0 +1,26 @@
+MAN(1)                            as-os                            MAN(1)
+
+NAME
+  man - read the system manual
+
+USAGE
+  man <topic>
+
+TOPICS
+  aiscript   what aiscript is and how to write .as files
+  tools      every tool the shell and interpreter have
+  vibe       the package manager
+  spawn      running apps
+  notepad    the interactive text editor
+  shell      shell builtins and reserved words
+  man        this page
+
+DESCRIPTION
+  man reads /share/man/<topic>.txt and shows it. If you don't know the
+  topic, run man without arguments to list the manuals. If a topic has no
+  dedicated page, man shows /share/man/tools.txt — the index of every tool
+  and topic — so you can pick the closest one.
+
+  The shell (kernel-2) uses man too — if it is unsure how to do something,
+  it reads the relevant manual instead of guessing. man is installed as an
+  essential package; you can vibe remove man if you truly never want it.

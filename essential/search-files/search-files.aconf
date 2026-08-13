@@ -1,0 +1,4 @@
+name = "search-files"
+description = "search for text inside files under /home — essential"
+version = "1.0.0"
+entry = "search-files.as"

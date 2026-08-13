@@ -1,0 +1,4 @@
+name = "notepad"
+description = "the interactive text editor — essential"
+version = "1.0.0"
+entry = "notepad.as"

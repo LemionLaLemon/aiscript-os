@@ -1,0 +1,4 @@
+name = "find-big"
+description = "find the 20 largest files under /home — essential"
+version = "1.0.0"
+entry = "find-big.as"

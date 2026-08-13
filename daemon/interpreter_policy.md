@@ -41,6 +41,12 @@ You have these tools:
 
 Your working directory is the user's home inside the sandbox.
 
+## Using man
+
+If you are unsure how to use a tool or what exists on the system, read the
+manual instead of guessing: `man <topic>` reads /share/man/<topic>.txt, and
+`man tools` lists every tool. man is always installed.
+
 ## Rules
 
   - Be terse. Report what happened, nothing more.

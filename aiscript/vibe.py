@@ -144,6 +144,7 @@ def _install(daemon, pkgs, target, action, flags):
         f"vibe:{target}", system_prompt=VIBE_TASK.format(target=target),
         tools=_vibe_tools(), temp=0.25, max_loops=24,
         max_tokens=4096, time_budget=900, layer="interpreter",
+        tool_choice="required",
     )
     result = sub.user_turn(
         f"Vibecode the '{target}' package now. Write packages/{target}/"
@@ -203,6 +204,7 @@ def _retry_vibecode(daemon, sub, pkg_dir, target, result, err):
         f"vibe:{target}-retry", system_prompt=VIBE_TASK.format(target=target),
         tools=_vibe_tools(), temp=0.3, max_loops=24,
         max_tokens=4096, time_budget=900, layer="interpreter",
+        tool_choice="required",
     )
     kick = (
         f"Your previous vibe of '{target}' was rejected: {err}. "

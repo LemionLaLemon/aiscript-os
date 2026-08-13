@@ -1,10 +1,73 @@
 import json
+import re
 import threading
 
 import requests
 
 
+_INVISIBLE_RE = re.compile(
+    r"[\u200b-\u200d\u2060\u2062\u2063\ufeff\u00ad]")
+
+
+def _strip_invisible(text):
+    """Remove zero-width / invisible padding characters the model emits."""
+    if not text:
+        return text
+    return _INVISIBLE_RE.sub("", text)
+
+
+def _detect_repetition(content, recent, window=200):
+    """Return True if the tail of `content` looks like a degenerate
+    repetition loop (the model repeating a short phrase over and over).
+    `recent` is a list of recently-emitted text chunks."""
+    tail = content[-window:]
+    if len(tail) < 40:
+        return False
+    # count how much of the tail is covered by its most common line
+    lines = [l for l in tail.splitlines() if l.strip()]
+    if not lines:
+        return False
+    unique = set(lines)
+    if len(unique) <= 2 and len(lines) >= 6:
+        return True
+    # also flag a repeating character pattern (e.g. the same line twice)
+    if len(lines) >= 4 and len(unique) * 2 <= len(lines):
+        return True
+    return False
+
+
+def _trim_repetition(content, window=200):
+    """Cut the degenerate repetition tail out of the content so it isn't
+    stored in the session history (which would fill the context window)."""
+    if not content:
+        return content
+    lines = content.splitlines(keepends=True)
+    # walk from the start; find the first point where a short run of lines
+    # repeats ≥3 times consecutively, and drop everything from there.
+    n = len(lines)
+    for i in range(n - 3):
+        chunk = lines[i:i + 3]
+        joined = "".join(chunk)
+        if len(joined) < 4:
+            continue
+        # look ahead for the same 3-line chunk repeating
+        repeat = 0
+        j = i + 3
+        while j + 3 <= n and "".join(lines[j:j + 3]) == joined:
+            repeat += 1
+            j += 3
+        if repeat >= 3:
+            return "".join(lines[:i]).rstrip()
+    return content
+
+
 class ModelError(Exception):
+    pass
+
+
+class ContextOverflow(ModelError):
+    """The request exceeded the server's context window. The session should
+    compact its history and retry (or tell the user to start a fresh one)."""
     pass
 
 
@@ -19,7 +82,7 @@ class ModelEngine:
 
     # ---- low level --------------------------------------------------------
 
-    def _payload(self, messages, tools, temp, slot, max_tokens):
+    def _payload(self, messages, tools, temp, slot, max_tokens, tool_choice):
         body = {
             "model": self.model,
             "messages": messages,
@@ -31,14 +94,17 @@ class ModelEngine:
         }
         if tools:
             body["tools"] = tools
+        if tool_choice:
+            body["tool_choice"] = tool_choice
         return body
 
     def chat(self, messages, tools=None, temp=0.15, slot=0, max_tokens=None,
-             on_event=None):
+             on_event=None, tool_choice="auto"):
         """Run one completion. Streams events via on_event and returns the
         full assistant message dict ({role, content?, tool_calls?})."""
         max_tokens = max_tokens or self.cfg.get("max_tokens", 1024)
-        body = self._payload(messages, tools, temp, slot, max_tokens)
+        body = self._payload(messages, tools, temp, slot, max_tokens,
+                             tool_choice)
         try:
             return self._chat_stream(body, tools, on_event)
         except ModelError:
@@ -48,6 +114,14 @@ class ModelEngine:
             if e.response is not None and e.response.status_code == 500:
                 self._log("falling back to non-streaming completion")
                 return self._chat_single(body, tools, on_event)
+            if e.response is not None and e.response.status_code == 400:
+                err = (e.response.text or "").lower()
+                if "exceed_context_size_error" in err or \
+                   "exceeds the available context" in err:
+                    raise ContextOverflow(
+                        "context window exceeded — compacting history and "
+                        "retrying"
+                    )
             raise
 
     # ---- streaming path ---------------------------------------------------
@@ -87,8 +161,21 @@ class ModelEngine:
                 emit({"type": "thinking", "text": delta["reasoning_content"]})
             if delta.get("content"):
                 tok = delta["content"]
-                content += tok
-                emit({"type": "content", "text": tok})
+                # The model pads its answers with zero-width spaces (\u200b).
+                # Each one is a real token, so left alone they (a) stream as
+                # invisible noise and (b) blow up the stored history — the
+                # tokenizer counts 2000 of them as 2000 tokens. Drop them so
+                # the answer and the history stay clean.
+                tok = _strip_invisible(tok)
+                if tok:
+                    content += tok
+                    emit({"type": "content", "text": tok})
+                    # Degenerate repetition loop: the model repeats a short
+                    # phrase forever instead of stopping. Cut the stream so
+                    # we don't wait out the whole generation.
+                    if _detect_repetition(content, None):
+                        self._log("repetition loop detected — truncating")
+                        break
             for tc in delta.get("tool_calls") or []:
                 idx = tc.get("index", 0)
                 if idx not in tool_calls:
@@ -101,9 +188,10 @@ class ModelEngine:
                     in_tool[0] = True
                 fn = tc.get("function") or {}
                 if fn.get("name"):
-                    tool_calls[idx]["function"]["name"] += fn["name"]
+                    tool_calls[idx]["function"]["name"] += _strip_invisible(fn["name"])
                 if fn.get("arguments"):
-                    tool_calls[idx]["function"]["arguments"] += fn["arguments"]
+                    tool_calls[idx]["function"]["arguments"] += _strip_invisible(
+                        fn["arguments"])
                 if tool_calls[idx]["function"]["name"]:
                     emit({
                         "type": "tool-delta",
@@ -113,7 +201,7 @@ class ModelEngine:
                     })
 
         if not tool_calls:
-            return {"role": "assistant", "content": content}
+            return {"role": "assistant", "content": _trim_repetition(content)}
         emit({"type": "tool-stream-end"})
         message = {"role": "assistant", "content": content or None}
         # normalise: only keep well-formed calls
@@ -138,10 +226,19 @@ class ModelEngine:
             f"{self.url}/v1/chat/completions", json=body,
             timeout=(30, 300),
         )
+        if resp.status_code == 400:
+            err = (resp.text or "").lower()
+            if "exceed_context_size_error" in err or \
+               "exceeds the available context" in err:
+                raise ContextOverflow(
+                    "context window exceeded — compacting history and retrying"
+                )
         resp.raise_for_status()
         resp.encoding = "utf-8"
         data = resp.json()
         msg = data["choices"][0]["message"]
+        if msg.get("content"):
+            msg["content"] = _strip_invisible(msg["content"])
         if on_event and msg.get("content"):
             on_event({"type": "content", "text": msg["content"]})
         return msg

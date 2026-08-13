@@ -1,0 +1,21 @@
+NOTEPAD(1)                        as-os                        NOTEPAD(1)
+
+NAME
+  notepad - the interactive text editor
+
+USAGE
+  spawn notepad [path]
+
+DESCRIPTION
+  notepad opens a text file (default ~/Documents/notes.txt) and shows its
+  contents with line numbers. It then asks what you want to do:
+    insert   - add text at a line
+    replace  - change the text of a line
+    delete   - remove a line
+    show     - re-display the buffer
+    done     - save and stop
+
+  After each change it re-shows the buffer, so you can see what you did.
+  Say "done" when you're finished; the file is saved.
+
+  Notepad is interpreted by the AI — tell it what you want in plain words.

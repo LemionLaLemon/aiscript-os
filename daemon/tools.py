@@ -276,6 +276,30 @@ _SHELL_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "cd",
+            "description": "Change the working directory. Relative paths "
+                           "resolve against it; '.' is current, '..' goes up, "
+                           "'~' is the user's home. e.g. cd(path=\"Documents\").",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "pwd",
+            "description": "Print the current working directory.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "shutdown",
             "description": "Shut the system down. Refuses if the system has "
                            "been up less than 2 minutes.",
@@ -506,7 +530,7 @@ class ToolRefusal(Exception):
 
 # ---- chroot runner for interpreter ----------------------------------------
 
-def _chroot_run(jail, command):
+def _chroot_run(jail, command, cwd="."):
     """Run command chrooted inside jail using unshare -r (user namespace)."""
     env = {
         "PATH": "/bin:/usr/bin:/sbin:/usr/sbin",
@@ -519,7 +543,7 @@ def _chroot_run(jail, command):
         proc = subprocess.run(
             ["unshare", "--user", "--map-root-user",
              "chroot", jail, "/bin/sh", "-c",
-             f"{env_str} /bin/sh -c {repr(command)}"],
+             f"{env_str} /bin/sh -c 'cd {repr(cwd)[1:-1]} && {repr(command)}'"],
             capture_output=True, timeout=10,
             preexec_fn=_limit_rlimits,
         )
@@ -660,7 +684,7 @@ class ToolExecutor:
     def append(self, path, content):
         return self._write(path, content, "ab")
 
-    def run(self, command):
+    def run(self, command, cwd="."):
         cmd = command.strip()
         if not cmd:
             raise ToolRefusal("empty command")
@@ -694,10 +718,11 @@ class ToolExecutor:
             "TERM": "dumb",
             "LANG": "C",
         }
+        cwd_path = os.path.join(self.jail, cwd) if cwd not in (".", "") else self.jail
         try:
             proc = subprocess.run(
                 ["/bin/sh", "-c", cmd],
-                cwd=self.jail, env=env, capture_output=True,
+                cwd=cwd_path, env=env, capture_output=True,
                 timeout=10, preexec_fn=_limit_rlimits,
             )
         except subprocess.TimeoutExpired:
@@ -847,15 +872,15 @@ class ToolExecutor:
 
     # ---- interpreter chrooted run -----------------------------------------
 
-    def run_interpreter(self, command):
+    def run_interpreter(self, command, cwd="."):
         """Run a command chrooted inside the jail — used by the interpreter layer."""
-        return _chroot_run(self.jail, command)
+        return _chroot_run(self.jail, command, cwd=cwd)
 
     # ---- dispatch ----------------------------------------------------------
 
-    def execute(self, tool, args, chrooted=False):
+    def execute(self, tool, args, chrooted=False, cwd="."):
         if chrooted and tool == "run":
-            return self.run_interpreter(args.get("command", ""))
+            return self.run_interpreter(args.get("command", ""), cwd=cwd)
         fn = getattr(self, tool, None)
         if fn is None:
             raise ToolRefusal(f"unknown tool: {tool}")

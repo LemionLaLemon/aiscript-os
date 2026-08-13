@@ -1,0 +1,56 @@
+TOOLS(1)                          as-os                          TOOLS(1)
+
+NAME
+  tools - every tool on the system
+
+SHELL LAYER (kernel-2) TOOLS
+  list(path, sort, top, filter, recursive)  list files and directories.
+        sort = size|name|mtime. top=N limits. filter is a glob.
+  read(path, start_line, max_lines)         read text from a file.
+  write(path, content)                      create or overwrite a file
+        (aiscript files and data files only).
+  append(path, content)                     append to a file.
+  run(command)                              run a shell command (busybox).
+        No python, no gcc, no networking, nothing destructive.
+  search(path, pattern, regex)              grep for content.
+  calc(expr)                                evaluate a math expression.
+  info()                                    system info: memory, disk, cpu,
+        uptime.
+  ask(prompt, choices)                      ask the user a question.
+  draw(spec)                                render a UI panel with asui.
+  spawn(app, args)                          run an aiscript app in its own
+        sub-session.
+  vibe(target, action, flags)               package management.
+  interpret(request)                        delegate a task to the
+        interpreter layer (plain English, never shell syntax).
+  delete(path)                              delete a file or empty dir.
+  move(src, dst)                            move or rename a file.
+  copy(src, dst)                            copy a file.
+  mkdir(path)                               create a directory.
+  cd(path)                                  change the working directory.
+        "." is current, "~" is the user's home, ".." goes up. All tools
+        now resolve relative paths against it. e.g. "cd Documents".
+  pwd()                                     print the current working
+        directory (the prompt also shows it, e.g. as/~/Documents#).
+  create_user(username)                     create a user account
+        (first-boot only).
+  shutdown()                                shut the system down (refuses
+        before 2 minutes uptime).
+
+INTERPRETER LAYER TOOLS (deep layer, chrooted)
+  run(command)       any busybox command. Everything is available:
+                     ls cat cp mv rm mkdir find grep sed awk sort wc echo
+                     touch chmod tar zip unzip.
+  list(path, ...)    list files with sizes.
+  read(path, ...)    read text from a file.
+  write(path, ...)   create or overwrite a file.
+  append(path, ...)  append to a file.
+  search(path, ...)  grep for content.
+  calc(expr)         evaluate a math expression.
+  info()             system info.
+  ask(prompt, ...)   ask the user a question (interactive apps).
+
+RULES
+  The shell prefers structured tools over raw run(). It delegates to the
+  interpreter (interpret tool) whenever the structured tools can't do the
+  job — grep/find/sed/awk, multi-step system tasks, bulk file manipulation.

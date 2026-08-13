@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import threading
 
@@ -11,6 +12,10 @@ from daemon.server import Daemon
 import asui
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+AUTONAME_EVERY = 5
+LONG_TURNS = 40
+LONG_TOKENS = 6000
 
 
 def load_cfg():
@@ -167,8 +172,17 @@ class Shell:
         self.prompt = profile.get("prompt", self.cfg["shell"]["prompt"])
         self.daemon.chaos.p = self.chaos_p
 
-        self.session = self.daemon.new_session(
-            "shell", temp=self.temp, max_tokens=2048)
+        self.session = None
+        self._session_seq = 0
+        latest = self.daemon.store.latest()
+        if latest:
+            self.session = self.daemon.load_session(
+                latest, temp=self.temp, max_tokens=2048)
+        if self.session is None:
+            self._new_session()
+        else:
+            print(f"\033[2mresumed session: {self.session.name}"
+                  f" ({self.session.turn_count()} turns)\033[0m")
         self._repl()
 
     # ---- REPL -------------------------------------------------------------------
@@ -176,9 +190,11 @@ class Shell:
     def _repl(self):
         while True:
             try:
-                line = input(f"\033[1;32m{self.prompt}\033[0m")
+                prompt = self._prompt()
+                line = input(f"\033[1;32m{prompt}\033[0m")
             except EOFError:
                 print()
+                self._save_current()
                 break
             except KeyboardInterrupt:
                 print()
@@ -187,6 +203,7 @@ class Shell:
             if not line:
                 continue
             if line in ("exit", "quit", ":q"):
+                self._save_current()
                 break
             if line == "help":
                 self._help()
@@ -204,6 +221,18 @@ class Shell:
                     print(f"temperature -> {self.temp}")
                 except (IndexError, ValueError):
                     print("usage: temp <0-1>")
+                continue
+            if line in ("new", "new temp"):
+                self._new_session(temp=("temp" in line.split()))
+                continue
+            if line == "sessions":
+                self._sessions()
+                continue
+            if line == "history":
+                self._history()
+                continue
+            if line.startswith("session "):
+                self._session_cmd(line)
                 continue
             if line == "reset":
                 self.session.reset()
@@ -241,11 +270,14 @@ class Shell:
             threading.Thread(target=spinner, daemon=True).start()
             try:
                 out = self.session.user_turn(line, on_event=on_event)
+            except Exception as e:
+                self._write(f"\r\033[K\033[33m(model error: {e})\033[0m\n")
+                out = ""
             finally:
                 stop.set()
 
             if streamed[0]:
-                if not out.endswith("\n"):
+                if out and not out.endswith("\n"):
                     self._write("\n")
             else:
                 self._clear_line()
@@ -253,12 +285,41 @@ class Shell:
                     print(out)
             print()
 
+            self._maybe_autoname()
+            self._autosave()
+            self._warn_if_long()
+
     def _help(self):
         print(
-            "builtins:  help  status  apps  pkgs  chaos on|off|p <n>  "
-            "temp <0-1>  reset  exit\n"
-            "everything else is interpreted by kernel-2, the AI.\n"
-            "reserved word: 'vibe' is package management (e.g. 'vibe install fastfetch')."
+            "everything you type is interpreted by kernel-2, the AI.\n"
+            "\n"
+            "builtins (typed as-is):\n"
+            "  help        show this help\n"
+            "  status      show session state (temp, user, thinking mode)\n"
+            "  apps        list installed apps and packages\n"
+            "  pkgs        list installed packages (same as 'vibe list')\n"
+            "  chaos on|off|p <n>   toggle/set the chaos probability\n"
+            "  temp <0-1>           set the AI temperature\n"
+            "  history     how many turns and how much context this session has\n"
+            "  reset       forget this conversation, keep the session\n"
+            "  exit / quit / :q     leave the shell\n"
+            "\n"
+            "sessions (this shell keeps a history of sessions):\n"
+            "  new                      start a fresh session (old one is saved)\n"
+            "  new temp                 start a temporary session (not saved)\n"
+            "  sessions                 list saved sessions\n"
+            "  session switch <name>    resume a saved session\n"
+            "  session rename <name> <new>  rename (locks auto-naming)\n"
+            "  session delete <name>    delete a saved session\n"
+            "\n"
+            "apps and packages (installed by default):\n"
+            "  man <topic>   read the manual (e.g. 'man shell', 'man tools')\n"
+            "  notepad <file>  edit a text file\n"
+            "  sysinfo       system info    find-big   biggest files\n"
+            "  search-files  search text\n"
+            "\n"
+            "reserved word: 'vibe' is package management ('vibe install X').\n"
+            "everything else — like 'cd Documents' or 'ls' — is handled by the AI."
         )
 
     def _status(self):
@@ -267,6 +328,186 @@ class Shell:
         print(f"user: {self.daemon.current_user}")
         print(f"slots: {len(self.daemon.sessions)} sessions")
         print(f"thinking: {self.show_thinking}")
+        print(f"current session: {self.session.name or '(unnamed)'}")
+
+    def _history(self):
+        s = self.session
+        turns = s.turn_count()
+        tokens = s.est_tokens()
+        print(f"session: {s.name or '(unnamed)'}")
+        print(f"turns: {turns}")
+        print(f"est context tokens: {tokens}")
+        if turns >= LONG_TURNS or tokens >= LONG_TOKENS:
+            print(f"\033[33m(!) session is getting long — type 'new' for a fresh one\033[0m")
+
+    def _warn_if_long(self):
+        s = self.session
+        if s.temp_session:
+            return
+        if s.turn_count() >= LONG_TURNS or s.est_tokens() >= LONG_TOKENS:
+            print(f"\033[2m(!) this session is getting long — type 'new' to start fresh\033[0m")
+
+    def _new_session(self, temp=False):
+        """Start a fresh (or temporary) session, saving the current one."""
+        if self.session is not None:
+            self._save_current()
+        self._session_seq += 1
+        placeholder = f"session-{self._session_seq}"
+        self.session = self.daemon.new_session(
+            placeholder, temp=self.temp, max_tokens=2048,
+            temp_session=temp)
+        self.daemon.sessions.pop(placeholder, None)
+        self.session.name = None
+        self.session.name_locked = False
+        self.session._auto_name_turns = 0
+        if temp:
+            print("temporary session started (won't be saved)")
+        else:
+            print("new session started")
+
+    def _autosave(self):
+        """Persist the current session if it's nameable and not temporary."""
+        s = self.session
+        if s.temp_session or not s.name:
+            return
+        self.daemon.store.save(s)
+
+    def _prompt(self):
+        """Prompt showing the current directory: as/~# at home,
+        as/~/Documents# inside Documents."""
+        base = self.prompt.rstrip().rstrip("#").rstrip() or "as"
+        cwd = getattr(self.session, "_display_cwd", lambda: "~")()
+        return f"{base}/{cwd}# "
+
+    def _save_current(self):
+        """Finalize the current session: auto-name it, then save if saved-able."""
+        if self.session is None:
+            return
+        self._maybe_autoname(force=True)
+        self._autosave()
+
+    def _sessions(self):
+        items = self.daemon.store.list()
+        if not items:
+            print("no saved sessions")
+            return
+        cur = self.session.name if self.session else None
+        for it in items:
+            mark = "*" if it["name"] == cur else " "
+            print(f" {mark} {it['name']:40} {it['turns']} turns")
+
+    def _session_cmd(self, line):
+        parts = line.split(None, 2)
+        if len(parts) < 2:
+            print("usage: session switch|rename|delete <name>")
+            return
+        cmd = parts[1]
+        if cmd == "list":
+            self._sessions()
+        elif cmd == "switch":
+            if len(parts) < 3:
+                print("usage: session switch <name>")
+                return
+            self._session_switch(parts[2])
+        elif cmd == "rename":
+            if len(parts) < 3:
+                print("usage: session rename <name> <new name>")
+                return
+            self._session_rename(parts[2])
+        elif cmd == "delete":
+            if len(parts) < 3:
+                print("usage: session delete <name>")
+                return
+            self._session_delete(parts[2])
+        else:
+            print(f"unknown session command: {cmd}")
+
+    def _session_switch(self, name):
+        self._save_current()
+        sess = self.daemon.load_session(name, temp=self.temp, max_tokens=2048)
+        if sess is None:
+            print(f"no saved session: {name}")
+            return
+        self.session = sess
+        print(f"switched to session: {name}")
+
+    def _session_rename(self, name, new_name=None):
+        if new_name is None:
+            new_name = name
+        ok, err = self.daemon.store.rename(name, new_name)
+        if not ok:
+            print(err)
+            return
+        if self.session is not None and self.session.name == name:
+            self.session.name = new_name
+            self.session.name_locked = True
+            self.daemon.sessions.pop(name, None)
+            self.daemon.sessions[new_name] = self.session
+        elif name in self.daemon.sessions:
+            other = self.daemon.sessions[name]
+            other.name = new_name
+            self.daemon.sessions.pop(name, None)
+            self.daemon.sessions[new_name] = other
+        print(f"renamed '{name}' -> '{new_name}' (name locked)")
+
+    def _session_delete(self, name):
+        if self.session is not None and self.session.name == name:
+            print("can't delete the active session; switch or start a new one first")
+            return
+        if self.daemon.delete_session(name):
+            print(f"deleted session: {name}")
+        else:
+            print(f"no saved session: {name}")
+
+    def _derive_name(self, text):
+        """Extractive session name from the first non-trivial user line."""
+        text = (text or "").strip()
+        text = re.sub(r"^<continuing>\s*", "", text)
+        line = text.splitlines()[0].strip() if text else ""
+        if not line:
+            return None
+        if len(line) > 48:
+            line = line[:48].rstrip() + "…"
+        return line
+
+    def _maybe_autoname(self, force=False):
+        """Auto-name the session from its first user message, and re-name it
+        every AUTONAME_EVERY turns (unless the user locked a name)."""
+        s = self.session
+        if s is None or s.temp_session or s.name_locked:
+            return
+        turns = s.turn_count()
+        if turns < 1:
+            return
+        if not force and not (turns == 1 or turns % AUTONAME_EVERY == 0):
+            return
+        last_user = None
+        for m in reversed(s.messages):
+            if m["role"] == "user":
+                last_user = m.get("content", "")
+                break
+        cand = self._derive_name(last_user)
+        if not cand:
+            return
+        if s.name == cand:
+            return
+        old = s.name
+        new = self._unique_name(cand)
+        s.name = new
+        if old:
+            self.daemon.store.rename(old, new)
+            self.daemon.sessions.pop(old, None)
+        self.daemon.sessions[new] = s
+
+    def _unique_name(self, base):
+        existing = {it["name"] for it in self.daemon.store.list()}
+        existing.discard(self.session.name if self.session else None)
+        if base not in existing:
+            return base
+        n = 2
+        while f"{base} ({n})" in existing:
+            n += 1
+        return f"{base} ({n})"
 
     def _chaos(self, line):
         parts = line.split()

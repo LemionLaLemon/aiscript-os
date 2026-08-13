@@ -29,7 +29,7 @@ cd ../..
 
 # Ensure basic directory structure
 mkdir -p "$JAIL/home" "$JAIL/apps" "$JAIL/packages" "$JAIL/etc/as-os"
-mkdir -p "$JAIL/tmp" "$JAIL/dev"
+mkdir -p "$JAIL/tmp" "$JAIL/dev" "$JAIL/share/man"
 
 # Create /dev/null and /dev/urandom for commands that need them
 # Skip if sudo is not available — most commands work without these

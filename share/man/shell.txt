@@ -1,0 +1,50 @@
+SHELL(1)                          as-os                          SHELL(1)
+
+NAME
+  shell - the as-os interactive shell (kernel-2)
+
+USAGE
+  as# <anything>
+
+DESCRIPTION
+  Everything you type is interpreted by kernel-2, the AI. Most things are
+  handled directly with tools; some are builtins handled by the shell itself.
+  The prompt shows your current directory: as/~# means home, and
+  as/~/Documents# means you are inside Documents. Use the cd and pwd tools
+  to move around, or just say "cd Documents" — the AI will do it.
+
+DIRECTORIES
+  The shell has a working directory. cd and pwd change/inspect it, and all
+  file tools (list/read/write/etc.) resolve relative paths against it. "cd
+  ~" returns home. The interpreter's own sessions always start at home.
+
+BUILTINS
+  help      show this help
+  status    show session state (temp, user, slots, thinking mode)
+  apps      list installed apps and packages
+  pkgs      list installed packages (vibe list)
+  chaos on|off|p <n>    toggle or set the chaos probability
+  temp <0-1>            set the session temperature
+  history   show current session turns and context size
+  new       start a fresh session (the old one is saved)
+  new temp  start a temporary session (not saved)
+  sessions  list saved sessions
+  session switch <name>    resume a saved session
+  session rename <name> <new>   rename a session (locks auto-naming)
+  session delete <name>    delete a saved session
+  reset     reset the conversation context
+  exit      leave the shell
+
+SESSIONS
+  Sessions are saved automatically and resumed on the next launch. When a
+  session has no explicit name, the shell names it from your words and keeps
+  renaming it as the conversation moves on. Sessions that grow past roughly
+  40 turns or 6000 tokens print a warning - type "new" to start fresh.
+  Temporary sessions ("new temp") run and are discarded when you leave them.
+
+RESERVED WORDS
+  vibe      package management (e.g. "vibe install fastfetch")
+  man       read the manual (e.g. "man vibe")
+
+SEE ALSO
+  man aiscript, man tools, man vibe, man spawn, man notepad

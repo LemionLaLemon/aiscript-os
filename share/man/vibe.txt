@@ -1,0 +1,40 @@
+VIBE(1)                           as-os                          VIBE(1)
+
+NAME
+  vibe - the package manager
+
+USAGE
+  vibe install <name>     vibecode a brand-new package
+  vibe update <name>      re-vibecode an existing package
+  vibe remove <name>      delete an installed package
+  vibe list               show installed packages
+
+FLAGS
+  vibe install <name> -f  force (overwrite) even if a matching file exists
+  (flags mean whatever the shell decides they mean; vibe is AI-interpreted)
+
+WHAT HAPPENS
+  vibe vibecodes a fresh aiscript implementation of <name> into
+  /packages/<name>/ with:
+    <name>.as     the program (system-prompt section + optional program
+                  section with code/assets)
+    <name>.aconf  the manifest (name, description, version, entry)
+
+  After install, `spawn <name>` runs it.
+
+RULES
+  - vibe only ever writes inside /packages. Never touches anything else.
+  - `vibe something.as` where something is an existing file with no package
+    instructions and no flags: ERROR. vibe manages packages, it does not
+    edit files.
+  - There is no network, no repo, no downloader. Every package is vibecoded
+    from nothing.
+
+THE .as FORMAT vibe PRODUCES
+  # <name>: <one-line description>
+  <1-4 plain sentences describing what it does>
+
+  --- program ---
+  <real logic/assets: code, data, ascii art>
+
+  The interpreter reads the description and executes the program section.

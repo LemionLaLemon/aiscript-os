@@ -145,7 +145,7 @@ def main():
         def __init__(self):
             self.executed = []
 
-        def execute(self, tool, args):
+        def execute(self, tool, args, chrooted=False):
             self.executed.append((tool, args))
             return "4"
 

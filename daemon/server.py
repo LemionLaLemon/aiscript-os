@@ -4,6 +4,7 @@ import time
 from .chaos import Chaos
 from .model import ModelEngine
 from .session import Session
+from .session_store import SessionStore
 from .tools import (SHELL_TOOLS, INTERPRETER_TOOLS, ToolExecutor, ToolRefusal)
 from .prompt import build_shell_prompt, build_interpreter_prompt
 from . import oobe
@@ -36,6 +37,7 @@ class Daemon:
         self.stream_out = []          # extra sinks for sub-session events
         self._current_user = None
         self.executor.current_user = None
+        self.store = SessionStore(self.daemon_cfg["jail"])
 
     # ---- lifecycle -----------------------------------------------------------
 
@@ -68,6 +70,7 @@ class Daemon:
     def current_user(self, value):
         self._current_user = value
         self.executor.current_user = value
+        self.store.user = value
 
     @property
     def jail(self):
@@ -85,7 +88,8 @@ class Daemon:
 
     def new_session(self, name, temp=None, tools=None, system_prompt=None,
                     max_tokens=None, max_loops=None, time_budget=None,
-                    layer="shell", keep_tool_msgs=False):
+                    layer="shell", keep_tool_msgs=False, tool_choice=None,
+                    temp_session=False):
         engine = self.engine
         prompt = system_prompt or self.shell_prompt()
         toolset = tools if tools is not None else SHELL_TOOLS
@@ -106,9 +110,43 @@ class Daemon:
             time_budget=time_budget,
             layer=layer,
             keep_tool_msgs=keep_tool_msgs,
+            tool_choice=tool_choice,
+            temp_session=temp_session,
         )
         self.sessions[name] = sess
         return sess
+
+    def load_session(self, name, temp=None, max_tokens=None, slot=None):
+        """Rebuild a Session object from a saved store entry. The system
+        prompt is regenerated fresh so live data (uptime/apps/user) is
+        current. Returns None if no such session is saved."""
+        data = self.store.load(name)
+        if data is None:
+            return None
+        if slot is None:
+            nslots = int(self.llama_cfg["slots"])
+            slot = self._slot_counter % nslots
+            self._slot_counter += 1
+        sess = Session.from_dict(
+            data,
+            self.engine,
+            self.executor,
+            system_prompt=self.shell_prompt(),
+            slot=slot,
+            chaos=self.chaos,
+            name=name,
+            log=self.log,
+            tools=SHELL_TOOLS,
+            max_tokens=max_tokens,
+        )
+        if temp is not None:
+            sess.temp = temp
+        self.sessions[name] = sess
+        return sess
+
+    def delete_session(self, name):
+        self.sessions.pop(name, None)
+        return self.store.delete(name)
 
     def user_home(self):
         if self.current_user:
@@ -188,6 +226,7 @@ class Daemon:
             max_loops=8,
             time_budget=120,
             layer="interpreter",
+            tool_choice="required",
         )
 
         def sink(ev):
@@ -215,6 +254,7 @@ class Daemon:
             max_loops=32,
             time_budget=600,
             layer="interpreter",
+            tool_choice="required",
         )
 
         def sink(ev):

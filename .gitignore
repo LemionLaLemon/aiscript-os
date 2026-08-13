@@ -6,3 +6,5 @@ docs/
 __pycache__/
 *.pyc
 .venv/
+# ISO build artifacts (multi-GB rootfs/squashfs/ISO)
+build/

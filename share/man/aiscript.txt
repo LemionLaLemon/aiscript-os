@@ -1,0 +1,45 @@
+AISCRIPT(1)                        as-os                        AISCRIPT(1)
+
+NAME
+  aiscript - the only programming language on this system
+
+WHAT IT IS
+  aiscript is interpreted by an AI. It has no strict syntax. A .as file is a
+  wish written down for the interpreter to read and carry out. Users can type
+  whatever they want, in whatever style, and the interpreter figures out the
+  intent.
+
+FILE TYPES
+  .as     ai script - a program, app, or anything runnable
+  .am     ai module - a snippet meant to be imported
+  .aconf  ai config - settings, also importable
+
+THE .as FORMAT (TWO SECTIONS)
+  1. SYSTEM PROMPT SECTION (REQUIRED):
+       # <name>: <one-line description>
+       one to four plain sentences describing what the program does.
+  2. --- program --- SECTION (OPTIONAL):
+       the program's real logic and assets - code, data, ASCII art,
+       templates. The interpreter reads and executes this.
+
+EXAMPLE
+  # cowsay: make a cow say a message
+  # given a message, show it in a speech bubble above an ASCII cow
+
+  --- program ---
+  COW = [
+      "        \\   ^__^",
+      "         \\  (oo)\\_______",
+      "            (__)\\       )\\/\\",
+      "                ||----w |",
+      "                ||     ||",
+  ]
+
+  when spawned: take the message from the first argument (or ask the user),
+  wrap it in a speech bubble, then print the cow below the bubble.
+
+RULES
+  - No networking. Ever.
+  - Only aiscript source files exist. No .py, .c, .js, etc.
+  - '~' is the user's home directory. Write "~" or "~/Downloads", never
+    "~/home".

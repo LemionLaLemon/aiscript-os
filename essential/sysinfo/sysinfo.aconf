@@ -1,0 +1,4 @@
+name = "sysinfo"
+description = "show system information: memory, disk, cpu, uptime — essential"
+version = "1.0.0"
+entry = "sysinfo.as"

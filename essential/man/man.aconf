@@ -1,0 +1,4 @@
+name = "man"
+description = "read the system manual — the essential help tool"
+version = "1.0.0"
+entry = "man.as"

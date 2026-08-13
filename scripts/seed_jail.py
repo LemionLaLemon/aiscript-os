@@ -52,6 +52,36 @@ def seed():
                 content = f.read()
             with open(os.path.join(apps, name), "w") as f:
                 f.write(content)
+
+    # Essential system tools are vibe packages, installed by default
+    # (Linux philosophy: it's your system — vibe remove them if you want).
+    essential_src = os.path.join(ROOT, "essential")
+    if os.path.isdir(essential_src):
+        for name in sorted(os.listdir(essential_src)):
+            pkg_dir = os.path.join(pkgs, name)
+            src_dir = os.path.join(essential_src, name)
+            if not os.path.isdir(src_dir):
+                continue
+            os.makedirs(pkg_dir, exist_ok=True)
+            for fn in os.listdir(src_dir):
+                if fn.endswith((".as", ".aconf", ".am")):
+                    with open(os.path.join(src_dir, fn)) as f:
+                        content = f.read()
+                    with open(os.path.join(pkg_dir, fn), "w") as f:
+                        f.write(content)
+
+    # Manpages for every tool/topic (tracked in share/man at repo root).
+    man_src = os.path.join(ROOT, "share", "man")
+    man_dst = os.path.join(JAIL, "share", "man")
+    if os.path.isdir(man_src):
+        os.makedirs(man_dst, exist_ok=True)
+        for fn in sorted(os.listdir(man_src)):
+            if fn.endswith(".txt"):
+                with open(os.path.join(man_src, fn)) as f:
+                    content = f.read()
+                with open(os.path.join(man_dst, fn), "w") as f:
+                    f.write(content)
+
     print(f"seeded {JAIL} (user {USER})")
 
 
