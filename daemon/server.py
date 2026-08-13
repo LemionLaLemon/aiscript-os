@@ -109,9 +109,10 @@ class Daemon:
         slots = int(self.llama_cfg.get("slots", 4))
         mask = self.llama_cfg.get("cpu_mask", "0,2,4,6")
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        bin_abs = os.path.join(root, bin_dir)
         cmd = [
             "taskset", "-c", mask,
-            os.path.join(root, bin_dir, "llama-server"),
+            os.path.join(bin_abs, "llama-server"),
             "-m", os.path.join(root, model_path),
             "-c", str(8192 * slots), "-t", str(threads),
             "--parallel", str(slots),
@@ -122,9 +123,11 @@ class Daemon:
             "--no-webui", "--log-disable",
         ]
         self.log(f"restarting engine on model {name}")
+        # CRITICAL: llama-server dlopens CPU backends relative to CWD — it
+        # must run with cwd == bin_dir or it fails with "no backends loaded".
         proc = _sp.Popen(cmd, stdout=open("/tmp/as-os-engine.log", "a"),
-                         stderr=_sp.STDOUT, cwd=root,
-                         env={"LD_LIBRARY_PATH": os.path.join(root, bin_dir)})
+                         stderr=_sp.STDOUT, cwd=bin_abs,
+                         env={"LD_LIBRARY_PATH": bin_abs})
         with open("/tmp/as-os-engine.pid", "w") as f:
             f.write(str(proc.pid))
         self.engine = ModelEngine(self.llama_cfg, self.log)

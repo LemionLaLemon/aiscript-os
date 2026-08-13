@@ -78,22 +78,13 @@ test: build/ascOS.iso build/data-disk.img
 
 # ---- virtualbox ----------------------------------------------------------------
 
-vbox: build/data-disk.img
+vbox: build/ascOS.iso build/data-disk.img
 	@echo "==> converting data disk to VirtualBox VDI..."
+	rm -f build/ascOS-data.vdi
 	VBoxManage convertdd build/data-disk.img build/ascOS-data.vdi 2>/dev/null || \
 		qemu-img convert -f raw -O vdi build/data-disk.img build/ascOS-data.vdi
-	@echo ""
-	@echo "==> VirtualBox setup ============================================"
-	@echo "  1. New VM: Linux/Arch, 64-bit, >=6 GB RAM (8B) or 2 GB (1.2B)"
-	@echo "  2. Storage:"
-	@echo "     - Optical drive  : build/ascOS.iso"
-	@echo "     - SATA controller: build/ascOS-data.vdi"
-	@echo "  3. System > Processor: enable VT-x/AMD-V (already on by default)"
-	@echo "  4. Boot order: Optical first"
-	@echo "  5. Boot; pick 8B or 1.2B at the model prompt"
-	@echo "  NOTE: the data disk must stay attached — it holds the root"
-	@echo "  squashfs AND your persistent user data."
-	@echo "================================================================"
+	@echo "==> provisioning the VirtualBox VM (no sudo — VBox is per-user)..."
+	bash scripts/iso/vbox.sh
 
 # ---- clean --------------------------------------------------------------------
 

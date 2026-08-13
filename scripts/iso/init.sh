@@ -33,6 +33,12 @@ mount -t ext4 LABEL=ascdata /data 2>/dev/null || {
 }
 echo "--- ascOS boot log ---" >> /data/boot.log 2>/dev/null || true
 
+# Bring up the loopback interface. The engine listens on 127.0.0.1 and the
+# health check must reach it — without lo up, connections fail with
+# "Network is unreachable" and the engine is never seen as healthy.
+log "bringing up loopback"
+ip link set lo up 2>/dev/null || ifconfig lo up 2>/dev/null || true
+
 # First boot: seed the writable data partition from the read-only seed.
 if [ ! -e /data/.seeded ]; then
     log "first boot — seeding data partition..."
@@ -70,7 +76,13 @@ PORT=8080
 SLOTS=4
 THREADS=4
 MASK=0,2,4,6
-taskset -c "$MASK" /opt/as-os/tools/llama.cpp/llama-b10333/llama-server \
+# CRITICAL: llama-server dlopens its CPU backend .so files RELATIVE TO CWD.
+# It must run with cwd == the bin dir or it fails with "no backends are
+# loaded". Do NOT change this.
+cd /opt/as-os/tools/llama.cpp/llama-b10333
+# The engine writes its full stderr to the data partition so we can see
+# exactly why it fails (don't --log-disable here — VM debugging needs it).
+taskset -c "$MASK" ./llama-server \
     -m "/opt/as-os/models/$MODEL" \
     -c $((8192 * SLOTS)) \
     -t "$THREADS" \
@@ -84,19 +96,30 @@ taskset -c "$MASK" /opt/as-os/tools/llama.cpp/llama-b10333/llama-server \
     --top-k 80 \
     --repeat-penalty 1.05 \
     --no-webui \
-    --log-disable \
     > /data/engine.log 2>&1 &
 
 ENGINE_PID=$!
 log "engine pid $ENGINE_PID (model $MODEL)"
 echo "$ENGINE_PID" > /tmp/as-os-engine.pid
 
-# Wait for the engine to answer on the health endpoint (python, no curl).
+# Make sure the engine process is actually alive before waiting forever.
+sleep 3
+if ! kill -0 "$ENGINE_PID" 2>/dev/null; then
+    log "FATAL: engine died immediately. log:"
+    log "$(tail -20 /data/engine.log 2>/dev/null || echo '(empty)')"
+    log "hint: check /data/engine.log from the host, and that the model file"
+    log "     exists and the CPU mask is valid for this machine."
+    sleep 30
+    echo b > /proc/sysrq-trigger
+fi
+
+# Wait for the engine to answer on the health endpoint.
 # Show a progress spinner so the user knows the model is loading.
 log "waiting for engine (model load can take a while)..."
 i=0
+HC=/opt/as-os/scripts/iso/healthcheck.py
 while [ "$i" -lt 300 ]; do
-    if /usr/bin/python3 -c "import requests,sys; sys.exit(0 if requests.get('http://127.0.0.1:$PORT/health',timeout=2).ok else 1)" 2>/dev/null; then
+    if /usr/bin/python3 "$HC" "$PORT" >> /data/boot.log 2>&1; then
         break
     fi
     i=$((i + 1))
