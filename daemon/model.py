@@ -42,6 +42,18 @@ def _detect_repetition(content, recent, window=200):
         counts = Counter(long_lines)
         if counts.most_common(1)[0][1] >= 3:
             return True
+    # Substring repetition: the model emits a repeated paragraph on ONE line
+    # with markers like "[options] ?" / "[END OF MESSAGE]" between copies.
+    # Take the first ~2 sentences as a fingerprint and count repeats in the
+    # tail. Use a bigger window (400) so 3+ full copies fit. Three repeats of
+    # the opening is a strong spiral signal; two could be a legit reply.
+    flat = re.sub(r'\s+', ' ', content[-400:])
+    if len(flat) >= 160:
+        lead = re.split(r'(?<=[.!?\]\}]) ', flat)
+        if len(lead) >= 2:
+            fp = lead[0] + ' ' + lead[1]
+            if len(fp) >= 40 and flat.count(fp) >= 3:
+                return True
     return False
 
 
@@ -85,6 +97,18 @@ def _trim_repetition(content, window=200):
                         # keep through the first occurrence (end of that line)
                         kept = "".join(lines[:idx]).rstrip()
                         return _strip_tail_markers(kept)
+    # (3) single-line substring repetition: a paragraph repeats on one line
+    # with markers between copies (e.g. "...[options] ?[END OF MESSAGE]").
+    import re as _re
+    flat = _re.sub(r'\s+', ' ', content)
+    lead = _re.split(r'(?<=[.!?\]\}]) ', flat)
+    if len(lead) >= 2:
+        fp = lead[0] + ' ' + lead[1]
+        if len(fp) >= 40 and flat.count(fp) >= 3:
+            first = flat.find(fp)
+            second = flat.find(fp, first + len(fp))
+            if first >= 0 and second > first:
+                return _strip_tail_markers(content[:second])
     return content
 
 

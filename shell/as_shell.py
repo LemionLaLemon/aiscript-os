@@ -202,6 +202,9 @@ class Shell:
             if line == "help":
                 self._help()
                 continue
+            if line == "clear":
+                self._clear_screen()
+                continue
             if line == "status":
                 self._status()
                 continue
@@ -302,6 +305,7 @@ class Shell:
             "  temp <0-1>           set the AI temperature\n"
             "  history     how many turns and how much context this session has\n"
             "  reset       forget this conversation, keep the session\n"
+            "  clear       clear the terminal screen\n"
             "  reoobe      re-run first-boot onboarding\n"
             "  model       show/choose the AI brain (model list / model set)\n"
             "  exit / quit / :q     leave the shell\n"
@@ -332,6 +336,10 @@ class Shell:
         print(f"thinking: {self.show_thinking}")
         print(f"current session: {self.session.name or '(unnamed)'}")
         print(f"model: {self.daemon.active_model()}")
+
+    def _clear_screen(self):
+        """Clear the terminal (a shell builtin — never sends this to the AI)."""
+        self._write("\033[2J\033[H")
 
     def _reoobe(self):
         """Re-run first-boot onboarding (username, chaos, machine name)."""

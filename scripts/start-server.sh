@@ -27,6 +27,7 @@ exec taskset -c "$MASK" env LD_LIBRARY_PATH="$BIN" "$BIN/llama-server" \
   --cache-prompt --cache-reuse 64 \
   -rea on \
   --reasoning-budget "$REASON_BUDGET" \
+  --reasoning-format deepseek \
   --host 127.0.0.1 \
   --port "$PORT" \
   --temp 0.2 \

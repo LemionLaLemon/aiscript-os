@@ -119,6 +119,7 @@ class Daemon:
             "-ctk", "q8_0", "-ctv", "q8_0",
             "--cache-prompt", "--cache-reuse", "64",
             "-rea", "on", "--reasoning-budget", "400",
+            "--reasoning-format", "deepseek",
             "--host", "127.0.0.1", "--port", str(port),
             "--temp", "0.2", "--top-k", "80", "--repeat-penalty", "1.05",
             "--no-webui", "--log-disable",
