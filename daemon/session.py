@@ -640,9 +640,10 @@ class Session:
                     args["src"] = self.resolve_path(args["src"])
                 if args.get("dst"):
                     args["dst"] = self.resolve_path(args["dst"])
-            # run executes inside cwd (host shell and chrooted interpreter).
+            # run always executes inside the chrooted jail — never on the
+            # host. There is no host shell to escape to (ascOS ships none).
             if tool == "run":
-                return self.executor.execute(tool, args, chrooted=self._chrooted,
+                return self.executor.execute(tool, args, chrooted=True,
                                              cwd=self.cwd)
             return self.executor.execute(tool, args, chrooted=self._chrooted)
         except Exception as e:

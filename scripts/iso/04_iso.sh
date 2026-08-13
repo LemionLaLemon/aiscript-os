@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Final ISO assembly: xorriso hybrid image (BIOS+UEFI bootable).
+# Final ISO assembly: xorriso hybrid image (BIOS isolinux + UEFI grub).
 # The data partition image is dropped next to the ISO for the installer.
 set -euo pipefail
 ROOT="$(pwd)"
@@ -10,7 +10,7 @@ echo "==> assembling $OUT ..."
 xorriso -as mkisofs \
     -iso-level 3 \
     -full-iso9660-filenames \
-    -volid "ascOS" \
+    -volid ascOS \
     -eltorito-boot isolinux/isolinux.bin \
     -eltorito-catalog isolinux/boot.cat \
     -no-emul-boot -boot-load-size 4 -boot-info-table \
@@ -18,7 +18,7 @@ xorriso -as mkisofs \
     -isohybrid-mbr /usr/lib/syslinux/bios/mbr.bin \
     -isohybrid-gpt-basdat \
     -o "$OUT" \
-    "$STAGE" 2>&1 | tail -5
+    "$STAGE" 2>&1 | tail -3
 
 ls -lh "$OUT"
 echo "==> done: $OUT"

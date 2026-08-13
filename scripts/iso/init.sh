@@ -6,11 +6,15 @@
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH
 
-mount -t proc proc /proc
-mount -t sysfs sysfs /sys
+mount -t proc proc /proc 2>/dev/null || true
+mount -t sysfs sysfs /sys 2>/dev/null || true
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
 mkdir -p /dev/pts
 mount -t devpts devpts /dev/pts 2>/dev/null || true
+# writable scratch dirs (the root squashfs is read-only)
+mount -t tmpfs tmpfs /tmp 2>/dev/null || true
+mkdir -p /run
+mount -t tmpfs tmpfs /run 2>/dev/null || true
 
 echo "ascOS booting..."
 echo "  mounting data partition..."
@@ -28,6 +32,22 @@ if [ ! -e /data/.seeded ]; then
     touch /data/.seeded
 fi
 
+# Model selection: first boot asks; every boot reads the jail config.
+MODEL_FILE=/data/jail/etc/as-os/model
+if [ ! -e "$MODEL_FILE" ]; then
+    echo ""
+    echo "  which brain do you want?"
+    echo "    1) 8B  (the full ascOS experience — needs ~8GB RAM)"
+    echo "    2) 1.2B  (lightweight — runs on ~2GB RAM)"
+    echo -n "  choice [1]: "
+    read MODEL_CHOICE
+    mkdir -p "$(dirname "$MODEL_FILE")"
+    case "$MODEL_CHOICE" in
+        2) echo "LFM2.5-1.2B-Instruct-Q4_K_M.gguf" > "$MODEL_FILE" ;;
+        *) echo "LFM2.5-8B-A1B-Q4_K_M.gguf" > "$MODEL_FILE" ;;
+    esac
+fi
+
 # The jail's writable parts (home, packages, config) live on the data
 # partition; bin/share/apps stay read-only in the squashfs.
 for d in home packages etc; do
@@ -37,7 +57,7 @@ done
 
 echo "  starting the engine..."
 export LD_LIBRARY_PATH=/opt/as-os/tools/llama.cpp/llama-b10333
-MODEL=$(cat /data/etc/as-os/model 2>/dev/null || echo "LFM2.5-8B-A1B-Q4_K_M.gguf")
+MODEL=$(cat "$MODEL_FILE" 2>/dev/null || echo "LFM2.5-8B-A1B-Q4_K_M.gguf")
 PORT=8080
 SLOTS=4
 THREADS=4
@@ -61,6 +81,7 @@ taskset -c "$MASK" /opt/as-os/tools/llama.cpp/llama-b10333/llama-server \
 
 ENGINE_PID=$!
 echo "  engine pid $ENGINE_PID (model $MODEL)"
+echo "$ENGINE_PID" > /tmp/as-os-engine.pid
 
 # Wait for the engine to answer on the health endpoint (python, no curl).
 echo "  waiting for engine..."

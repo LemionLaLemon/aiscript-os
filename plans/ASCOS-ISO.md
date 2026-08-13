@@ -55,9 +55,32 @@ Fastest viable: minimal pacstrap (Arch) rootfs, stripped to bare minimum.
 ## Verification checklist
 
 - QEMU boots to `as#` (no login prompt anywhere).
-- `sysinfo` prints ascOS + ASCII logo.
-- No compiler/package-manager/ssh in the rootfs.
-- `run` from the shell executes inside the jail.
-- OOBE lets you pick 8B or 1.2B; `reoobe` re-runs it.
+  [PARTIAL — stage1+stage2 boot cleanly through engine startup; as# prompt
+   not reached under QEMU TCG emulation because model load is glacial there.
+   The exact engine cmd + config verified working on real hardware.]
+- `sysinfo` prints ascOS + ASCII logo.  [DONE — sysinfo.as rewritten]
+- No compiler/package-manager/ssh in the rootfs.  [DONE — 02_strip.sh removes]
+- `run` from the shell executes inside the jail.  [DONE — session.py run
+   always chrooted]
+- OOBE lets you pick 8B or 1.2B; `reoobe` re-runs it.  [DONE — init prompts
+   first boot, daemon.set_model + shell model/reoobe builtins]
 - Data (users, packages, sessions) survives reboot on the data partition.
-- `make iso` reproduces the image.
+  [DONE — ext4 ascdata partition; stage1 boots root.squashfs from it]
+- `make iso` reproduces the image.  [DONE — Makefile buildchain]
+
+## Boot flow (final)
+
+- isolinux/GRUB loads kernel + initramfs.
+- stage-1 initramfs: insmod loop+squashfs, find data partition (ext4
+  LABEL=ascdata), mount it, losetup root.squashfs, mount squashfs, move
+  /proc//sys//dev, switch_root to /sbin/init.
+- stage-2 /sbin/init: mount proc/sys/dev/pts + tmpfs /tmp//run, mount data
+  partition, seed on first boot, ask model on first boot, bind jail
+  home/packages/etc, start llama-server on the chosen model, exec
+  as_shell.py. No getty/login/sshd anywhere.
+
+## Build system
+
+`make iso` (full), `make rootfs`, `make squashfs`, `make initramfs`,
+`make data-disk`, `make test` (QEMU), `make clean`. Root required.
+

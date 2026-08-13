@@ -164,13 +164,7 @@ class Shell:
         if did_oobe:
             print("\n\033[1;32mWelcome. The system is yours now.\033[0m\n")
 
-        profile = read_profile(
-            os.path.join(self.daemon.user_home(), ".asrc")
-        )
-        self.temp = profile.get("temp", self.cfg["daemon"]["temp"])
-        self.chaos_p = profile.get("chaos_p", self.cfg["chaos"]["p"])
-        self.prompt = profile.get("prompt", self.cfg["shell"]["prompt"])
-        self.daemon.chaos.p = self.chaos_p
+        self._load_profile()
 
         self.session = None
         self._session_seq = 0
@@ -224,6 +218,12 @@ class Shell:
                 continue
             if line in ("new", "new temp"):
                 self._new_session(temp=("temp" in line.split()))
+                continue
+            if line == "reoobe":
+                self._reoobe()
+                continue
+            if line.startswith("model"):
+                self._model_cmd(line)
                 continue
             if line == "sessions":
                 self._sessions()
@@ -302,6 +302,8 @@ class Shell:
             "  temp <0-1>           set the AI temperature\n"
             "  history     how many turns and how much context this session has\n"
             "  reset       forget this conversation, keep the session\n"
+            "  reoobe      re-run first-boot onboarding\n"
+            "  model       show/choose the AI brain (model list / model set)\n"
             "  exit / quit / :q     leave the shell\n"
             "\n"
             "sessions (this shell keeps a history of sessions):\n"
@@ -329,6 +331,50 @@ class Shell:
         print(f"slots: {len(self.daemon.sessions)} sessions")
         print(f"thinking: {self.show_thinking}")
         print(f"current session: {self.session.name or '(unnamed)'}")
+        print(f"model: {self.daemon.active_model()}")
+
+    def _reoobe(self):
+        """Re-run first-boot onboarding (username, chaos, machine name)."""
+        print("re-running OOBE...")
+        did = self.daemon.run_oobe(self.ask_handler, on_event=self._main_event,
+                                   force=True)
+        if did:
+            print("\n\033[1;32mOnboarding done. The system is yours again.\033[0m\n")
+            self._load_profile()
+        else:
+            print("OOBE did not run.")
+
+    def _load_profile(self):
+        """(Re)load user profile settings after OOBE."""
+        import os as _os
+        profile = read_profile(
+            _os.path.join(self.daemon.user_home(), ".asrc"))
+        self.temp = profile.get("temp", self.cfg["daemon"]["temp"])
+        self.chaos_p = profile.get("chaos_p", self.cfg["chaos"]["p"])
+        self.prompt = profile.get("prompt", self.cfg["shell"]["prompt"])
+        self.daemon.chaos.p = self.chaos_p
+
+    def _model_cmd(self, line):
+        """model / model list / model set <name> — choose the AI's brain."""
+        parts = line.split()
+        if len(parts) == 1 or parts[1] == "list":
+            avail = self.daemon.available_models()
+            print(f"current model: {self.daemon.active_model()}")
+            if avail:
+                print("available:")
+                for m in avail:
+                    print(f"  {m}")
+            return
+        if len(parts) >= 3 and parts[1] in ("set", "use"):
+            name = parts[2]
+            print(f"switching to {name}... (engine restarting)")
+            err = self.daemon.set_model(name)
+            if err:
+                print(err)
+            else:
+                print(f"now running {self.daemon.active_model()}")
+            return
+        print("usage: model | model list | model set <name>")
 
     def _history(self):
         s = self.session

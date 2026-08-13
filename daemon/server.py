@@ -49,6 +49,87 @@ class Daemon:
         self._load_persisted_user()
         self.log(f"model engine alive: {self.llama_cfg['host']}:{self.llama_cfg['port']}")
 
+    # ---- model management (ascOS image) --------------------------------------
+
+    def active_model(self):
+        """The model file currently selected on the data partition (or the
+        config default if none is stored)."""
+        try:
+            with open(os.path.join(self.jail, "etc/as-os/model")) as f:
+                name = f.read().strip()
+            if name:
+                return name
+        except OSError:
+            pass
+        return self.llama_cfg.get("model_name", "LFM2.5-8B-A1B-Q4_K_M.gguf")
+
+    def available_models(self):
+        """Model files shipped in the image's models dir."""
+        d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "models")
+        if not os.path.isdir(d):
+            return []
+        return sorted(f for f in os.listdir(d) if f.endswith(".gguf"))
+
+    def set_model(self, name):
+        """Persist a model choice to the data partition and restart the
+        engine with it. Returns an error string, or None on success."""
+        if "/" in name or not name.endswith(".gguf"):
+            return "invalid model name"
+        avail = self.available_models()
+        if avail and name not in avail:
+            return f"unknown model '{name}'. available: {', '.join(avail)}"
+        cfg_dir = os.path.join(self.jail, "etc/as-os")
+        os.makedirs(cfg_dir, exist_ok=True)
+        with open(os.path.join(cfg_dir, "model"), "w") as f:
+            f.write(name + "\n")
+        self._restart_engine(name)
+        return None
+
+    def _restart_engine(self, name):
+        """Kill the current llama-server and start one on the chosen model.
+        The image's init also does this at boot; on a host, this is a no-op
+        if no engine is running under our control."""
+        import signal
+        import subprocess as _sp
+        # find and stop our engine
+        try:
+            pid = int(open("/tmp/as-os-engine.pid").read().strip())
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        except (OSError, ValueError):
+            pass
+        # start a new one in the background
+        bin_dir = self.llama_cfg.get("bin_dir", "tools/llama.cpp/llama-b10333")
+        model_path = os.path.join("models", name)
+        port = int(self.llama_cfg.get("port", 8080))
+        threads = int(self.llama_cfg.get("threads", 4))
+        slots = int(self.llama_cfg.get("slots", 4))
+        mask = self.llama_cfg.get("cpu_mask", "0,2,4,6")
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cmd = [
+            "taskset", "-c", mask,
+            os.path.join(root, bin_dir, "llama-server"),
+            "-m", os.path.join(root, model_path),
+            "-c", str(8192 * slots), "-t", str(threads),
+            "--parallel", str(slots),
+            "-ctk", "q8_0", "-ctv", "q8_0",
+            "--cache-prompt", "--cache-reuse", "64",
+            "-rea", "off", "--host", "127.0.0.1", "--port", str(port),
+            "--temp", "0.2", "--top-k", "80", "--repeat-penalty", "1.05",
+            "--no-webui", "--log-disable",
+        ]
+        self.log(f"restarting engine on model {name}")
+        proc = _sp.Popen(cmd, stdout=open("/tmp/as-os-engine.log", "a"),
+                         stderr=_sp.STDOUT, cwd=root,
+                         env={"LD_LIBRARY_PATH": os.path.join(root, bin_dir)})
+        with open("/tmp/as-os-engine.pid", "w") as f:
+            f.write(str(proc.pid))
+        self.engine = ModelEngine(self.llama_cfg, self.log)
+        self._wait_engine(timeout=180)
+
     def _wait_engine(self, timeout=30):
         """Poll the engine health with backoff. The server can be briefly
         unreachable right after bind (still loading KV / under load), so a
@@ -168,10 +249,10 @@ class Daemon:
 
     # ---- OOBE -------------------------------------------------------------------
 
-    def run_oobe(self, ask_handler, on_event=None):
-        if os.path.exists(os.path.join(self.jail, "etc/as-os/configured")):
+    def run_oobe(self, ask_handler, on_event=None, force=False):
+        if not force and os.path.exists(os.path.join(self.jail, "etc/as-os/configured")):
             return False
-        self.log("first boot: running OOBE")
+        self.log("running OOBE")
         self.current_user = None
         self.executor.handlers["ask"] = ask_handler
         self.executor.handlers["draw"] = None
