@@ -88,6 +88,9 @@ if [ -e "$ENGINE_CONF" ]; then
 fi
 
 log "engine config: slots=$SLOTS ctx=$CTX threads=$THREADS mask=$MASK"
+# Cap the thinking budget — this is a reasoning model that otherwise burns
+# ~2 min per turn thinking before answering.
+REASON_BUDGET=${REASON_BUDGET:-400}
 # CRITICAL: llama-server dlopens its CPU backend .so files RELATIVE TO CWD.
 # It must run with cwd == the bin dir or it fails with "no backends are
 # loaded". Do NOT change this.
@@ -101,7 +104,8 @@ taskset -c "$MASK" ./llama-server \
     --parallel "$SLOTS" \
     -ctk q8_0 -ctv q8_0 \
     --cache-prompt --cache-reuse 64 \
-    -rea off \
+    -rea on \
+    --reasoning-budget "$REASON_BUDGET" \
     --host 127.0.0.1 \
     --port "$PORT" \
     --temp 0.2 \
@@ -144,6 +148,13 @@ done
 
 log "hello. you are not in linux anymore. you are in ascOS."
 
-# The soul of the machine. There is no fallback.
+# The soul of the machine. There is no fallback. If the shell ever exits
+# (e.g. "exit"), reboot rather than dying as PID 1 (which would panic).
 cd /opt/as-os
-exec /usr/bin/python3 shell/as_shell.py
+while true; do
+    /usr/bin/python3 shell/as_shell.py
+    log "shell exited — rebooting ascOS in 5s"
+    sleep 5
+    echo b > /proc/sysrq-trigger
+    sleep 30
+done

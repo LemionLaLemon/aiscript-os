@@ -16,5 +16,7 @@ and topic — and tell the user there is no dedicated page for their topic,
 showing them the index so they can pick the closest one.
 
 If no topic was given, use the list tool on /share/man to show which
-manuals are available, tell the user the topic names, and ask which
-one they would like to read.
+manuals are available, and show the user the list of topic names with a
+one-line description of each (tools, vibe, spawn, notepad, shell, aiscript,
+man). Do NOT try to ask the user a question or pick a topic yourself — just
+show the list and stop. The user will run "man <topic>" next.

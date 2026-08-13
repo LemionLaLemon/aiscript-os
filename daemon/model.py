@@ -90,7 +90,7 @@ def _trim_repetition(content, window=200):
 
 def _strip_tail_markers(text):
     """Remove reasoning/repetition markers that leak onto the tail of an
-    answer: 'ANSWER', '</think>', '```', stray separators."""
+    answer: 'ANSWER', '</think>', '```', trailing dot/ellipsis padding."""
     import re as _re
     t = text
     prev = None
@@ -100,6 +100,8 @@ def _strip_tail_markers(text):
         t = _re.sub(r"(?i)answer$", "", t)
         t = t.replace("</think>", "")
         t = _re.sub(r"(?m)^\s*answer\s*$", "", t)
+        # trailing padding: runs of dots/ellipsis the model adds after finishing
+        t = _re.sub(r"[.…\u2026]{3,}\s*$", "", t)
         t = _re.sub(r"\n{3,}", "\n\n", t)
         t = t.rstrip()
     return t

@@ -11,6 +11,9 @@ CTX=${CTX:-8192}        # context PER SLOT
 THREADS=${THREADS:-4}
 SLOTS=${SLOTS:-4}
 MASK=${MASK:-0,2,4,6}
+# Cap the thinking budget. This model is a reasoning model and otherwise
+# burns ~1500 tokens / ~2 minutes per turn just thinking before answering.
+REASON_BUDGET=${REASON_BUDGET:-400}
 
 # llama-server splits -c across --parallel slots, so pass the total.
 TOTAL_CTX=$((CTX * SLOTS))
@@ -22,7 +25,8 @@ exec taskset -c "$MASK" env LD_LIBRARY_PATH="$BIN" "$BIN/llama-server" \
   --parallel "$SLOTS" \
   -ctk q8_0 -ctv q8_0 \
   --cache-prompt --cache-reuse 64 \
-  -rea off \
+  -rea on \
+  --reasoning-budget "$REASON_BUDGET" \
   --host 127.0.0.1 \
   --port "$PORT" \
   --temp 0.2 \

@@ -61,9 +61,10 @@ def run(daemon, ask_handler, on_event=None):
     oob_tools = [t for t in TOOLS
                  if t["function"]["name"] in OOBE_TOOL_NAMES]
     sess = daemon.new_session("oobe", temp=0.2, tools=oob_tools,
-                              system_prompt=prompt, max_tokens=2048,
-                              max_loops=12, time_budget=120,
-                              keep_tool_msgs=True)
+                              system_prompt=prompt, max_tokens=4096,
+                              max_loops=12, time_budget=180,
+                              keep_tool_msgs=True,
+                              tool_choice="required")
     kick = ("Begin onboarding. Follow steps 1-6 in order.")
     for _ in range(3):
         sess.user_turn(kick, on_event=on_event)
