@@ -79,6 +79,10 @@ test: build/ascOS.iso build/data-disk.img
 # ---- virtualbox ----------------------------------------------------------------
 
 vbox: build/ascOS.iso build/data-disk.img
+	@echo "==> clearing stale VirtualBox medium registration..."
+	-VBoxManage controlvm ascOS poweroff 2>/dev/null || true
+	-VBoxManage closemedium disk build/ascOS-data.vdi 2>/dev/null || true
+	-VBoxManage unregistervm ascOS --delete 2>/dev/null || true
 	@echo "==> converting data disk to VirtualBox VDI..."
 	rm -f build/ascOS-data.vdi
 	VBoxManage convertdd build/data-disk.img build/ascOS-data.vdi 2>/dev/null || \
