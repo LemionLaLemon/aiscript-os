@@ -228,7 +228,7 @@ class Shell:
             if line.startswith("model"):
                 self._model_cmd(line)
                 continue
-            if line == "sessions":
+            if line == "sessions" or line.startswith("sessions "):
                 self._sessions()
                 continue
             if line == "history":

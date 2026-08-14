@@ -312,6 +312,8 @@ class Session:
                 content = msg.get("content") or ""
                 text_call = self._extract_text_tool_call(content)
                 if text_call is None:
+                    text_call = self._extract_xml_tool_call(content)
+                if text_call is None:
                     text_call = self._extract_json_command_call(content)
                 if text_call:
                     tool, args = text_call
@@ -504,6 +506,31 @@ class Session:
             return None
         return tool, args
 
+    # `<function-call>toolname(args)</function-call>` — the XML-ish wrapper
+    # some models emit. The body is the same toolname(args) syntax.
+    _XML_CALL_RE = re.compile(
+        r'<function-call>\s*(.*?)\s*</function-call>',
+        re.IGNORECASE | re.DOTALL)
+
+    def _extract_xml_tool_call(self, content):
+        """Parse a `<function-call>toolname(args)</function-call>` wrapper
+        into (tool, args). The model sometimes emits this instead of a
+        structured tool_calls response. Returns None if not a valid call."""
+        if not content:
+            return None
+        m = self._XML_CALL_RE.search(content)
+        if not m:
+            return None
+        body = m.group(1).strip()
+        # body may be "toolname(args)" or a JSON blob; reuse existing parsers
+        inner = self._extract_text_tool_call(body)
+        if inner:
+            return inner
+        inner = self._extract_json_command_call(body)
+        if inner:
+            return inner
+        return None
+
     def _extract_bracket_tool_call(self, content):
         """Parse a `[tool] arg` bracket directive like
         `[run] mkdir home/user/Documents/asm-calc` into (tool, args).
@@ -597,6 +624,15 @@ class Session:
             return None
         if not isinstance(data, dict):
             return None
+        # shape: {"tool": "name", "args": {...}} — a direct tool+args object
+        tool_name = data.get("tool") or data.get("name") or data.get("function")
+        if tool_name and isinstance(tool_name, str):
+            tool_name = tool_name.strip().lower()
+            known = {t["function"]["name"] for t in self.tools}
+            if tool_name in known:
+                args = data.get("args") or data.get("arguments") or {}
+                if isinstance(args, dict):
+                    return tool_name, args
         cmds = data.get("commands") or data.get("command")
         if not cmds:
             return None
