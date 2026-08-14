@@ -181,11 +181,48 @@ class Shell:
 
     # ---- REPL -------------------------------------------------------------------
 
+    def _read_line(self, prompt):
+        """Read one command, supporting multi-line input.
+
+        Two ways to enter multiple lines that are passed to the AI as ONE
+        message (instead of each line becoming its own command):
+          - backslash continuation: a line ending in '\\' continues
+          - brace block: a line that is just '{' opens a block; '}' alone
+            closes it. All lines inside are joined and sent together.
+        The colored prompt is only shown on the first line.
+        """
+        first = input(f"\033[1;32m{prompt}\033[0m")
+        if first.rstrip().endswith("\\"):
+            # backslash continuation: strip trailing '\' and keep reading
+            # until a line without a trailing '\'
+            lines = [first]
+            while lines[-1].rstrip().endswith("\\"):
+                lines[-1] = lines[-1].rstrip()[:-1].rstrip()
+                try:
+                    nxt = input(f"\033[2m... \033[0m")
+                except (EOFError, KeyboardInterrupt):
+                    break
+                lines.append(nxt)
+            return "\n".join(lines)
+        if first.strip() == "{":
+            # brace block: read until a lone '}'
+            lines = []
+            while True:
+                try:
+                    nxt = input(f"\033[2m... \033[0m")
+                except (EOFError, KeyboardInterrupt):
+                    break
+                if nxt.strip() == "}":
+                    break
+                lines.append(nxt)
+            return "\n".join(lines)
+        return first
+
     def _repl(self):
         while True:
             try:
                 prompt = self._prompt()
-                line = input(f"\033[1;32m{prompt}\033[0m")
+                line = self._read_line(prompt)
             except EOFError:
                 print()
                 self._save_current()
@@ -247,6 +284,9 @@ class Shell:
             if line == "pkgs":
                 self._pkgs()
                 continue
+            if line.startswith("run ") or line.startswith("run\t"):
+                self._run_as_file(line[4:].strip())
+                continue
             # bare word matching an installed app/package -> spawn directly
             if self._try_app_spawn(line):
                 continue
@@ -296,6 +336,10 @@ class Shell:
         print(
             "everything you type is interpreted by kernel-2, the AI.\n"
             "\n"
+            "multi-line input:\n"
+            "  end a line with \\ to continue on the next line\n"
+            "  type { on its own to start a block, } alone to end it\n"
+            "\n"
             "builtins (typed as-is):\n"
             "  help        show this help\n"
             "  status      show session state (temp, user, thinking mode)\n"
@@ -323,6 +367,10 @@ class Shell:
             "  notepad <file>  edit a text file\n"
             "  sysinfo       system info    find-big   biggest files\n"
             "  search-files  search text\n"
+            "\n"
+            "running your own aiscript:\n"
+            "  run <file.as>   interpret a .as file you wrote\n"
+            "                  (e.g. 'run Documents/hello.as' or 'run ~/x.as')\n"
             "\n"
             "reserved word: 'vibe' is package management ('vibe install X').\n"
             "everything else — like 'cd Documents' or 'ls' — is handled by the AI."
@@ -594,6 +642,62 @@ class Shell:
             print("available apps:\n" + "\n".join(found))
         else:
             print("no apps installed. try: vibe install <something>")
+
+    def _run_as_file(self, arg):
+        """Run a user-written aiscript file: 'run ~/Documents/hello.as' or
+        'run Documents/hello.as' (relative to the session cwd). Resolves the
+        file inside the sandbox, then interprets it with the runner."""
+        if not arg:
+            print("usage: run <file.as>   e.g. run Documents/hello.as")
+            return
+        parts = arg.split()
+        path = parts[0]
+        args = parts[1:]
+        jail = self.daemon.jail
+        # Resolve against the session cwd (jail-relative), then home, then
+        # Documents — mirroring how the model resolves paths.
+        candidates = []
+        cwd = getattr(self.session, "cwd", None) or ""
+        if path.startswith("/"):
+            candidates.append(os.path.join(jail, path.lstrip("/")))
+        elif path.startswith("~"):
+            home = os.path.join(jail, "home", self.daemon.current_user or "")
+            rest = path[2:].lstrip("/") if path.startswith("~/") else ""
+            candidates.append(os.path.join(home, rest))
+        else:
+            if cwd:
+                candidates.append(os.path.join(jail, cwd, path))
+            candidates.append(os.path.join(jail, path))
+            candidates.append(os.path.join(
+                jail, "home", self.daemon.current_user or "", "Documents", path))
+        real = None
+        for c in candidates:
+            c = os.path.realpath(c)
+            if os.path.isfile(c) and c.startswith(os.path.realpath(jail)):
+                real = c
+                break
+        if real is None:
+            print(f"no such file: {path} (looked in "
+                  f"{', '.join(candidates)})")
+            return
+        # Interpret the file in a fresh interpreter sub-session.
+        from aiscript import runner
+        from daemon.tools import INTERPRETER_TOOLS
+        name = f"run:{os.path.basename(real)}"
+        sub = self.daemon.new_session(
+            name, system_prompt=self.daemon.interpreter_prompt(),
+            tools=[t for t in INTERPRETER_TOOLS],
+            temp=0.15, max_tokens=2048, max_loops=12,
+            time_budget=300, layer="interpreter", tool_choice="required",
+            cwd=os.path.dirname(os.path.relpath(real, jail)),
+        )
+        self._write(f"\033[32mrun {os.path.relpath(real, jail)}...\033[0m\n")
+        report = runner.run_file(sub, real, args)
+        report = (report or "").strip()
+        if report:
+            print(report[:2000])
+        else:
+            print(f"ran {os.path.basename(real)} (no report)")
 
     def _try_app_spawn(self, line):
         """If the user's line starts with an installed app/package name
