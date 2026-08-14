@@ -13,11 +13,8 @@ _SHELL_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "list",
-            "description": "List files and directories inside a path. "
-                           "Sort by 'size' (largest first), 'name', or 'mtime'. "
-                           "top=N limits the number of entries (useful with "
-                           "sort=size to find the biggest files). filter is a "
-                           "glob like '*.pdf'. recursive walks subdirs.",
+            "description": "List files/dirs in a path. sort=size|name|mtime|none. "
+                           "top=N limits entries. filter is a glob. recursive walks subdirs.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -51,8 +48,7 @@ _SHELL_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "write",
-            "description": "Create or overwrite a text file. Only aiscript "
-                           "files and data files are allowed.",
+            "description": "Create or overwrite a text file (aiscript/data only).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -67,7 +63,7 @@ _SHELL_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "append",
-            "description": "Append text to a file (create it if missing).",
+            "description": "Append text to a file (create if missing).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -82,8 +78,7 @@ _SHELL_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "run",
-            "description": "Run a shell command in the primary (busybox) "
-                           "shell. The system is sandboxed and offline.",
+            "description": "Run a shell command in the sandboxed busybox shell.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -113,7 +108,7 @@ _SHELL_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "calc",
-            "description": "Evaluate a math expression, e.g. '2 * (3 + 4)'.",
+            "description": "Evaluate a math expression.",
             "parameters": {
                 "type": "object",
                 "properties": {"expr": {"type": "string"}},
@@ -133,8 +128,7 @@ _SHELL_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "ask",
-            "description": "Ask the user a question and get an answer. "
-                           "choices is an optional list the user can pick from.",
+            "description": "Ask the user a question. choices is an optional list.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -149,10 +143,7 @@ _SHELL_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "draw",
-            "description": "Render a UI panel with asui. spec is a dict: "
-                           "{'title': str, 'lines': [str], 'boxes': "
-                           "[{'x','y','w','h'}], 'status': str}. Draws to the "
-                           "terminal/framebuffer.",
+            "description": "Render a UI panel with asui: {'title','lines','boxes','status'}.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -167,9 +158,7 @@ _SHELL_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "spawn",
-            "description": "Run an aiscript app in its own sub-session. "
-                           "e.g. spawn(app=\"du-sort\", args=[\"home/demo/Documents\"]) "
-                           "— put arguments in the args array, never inside app.",
+            "description": "Run an aiscript app in its own sub-session.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -184,8 +173,7 @@ _SHELL_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "vibe",
-            "description": "Package management. Vibecodes an aiscript "
-                           "implementation of the named package into /packages.",
+            "description": "Package manager. Vibecodes an aiscript package into /packages.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -201,15 +189,11 @@ _SHELL_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "interpret",
-            "description": "Delegate a task to the interpreter layer. Describe "
-                           "the goal in plain English, never shell syntax. Say "
-                           "'list files in the working directory', not 'run ls'. "
-                           "The interpreter has the full busybox shell chrooted "
-                           "in the sandbox.",
+            "description": "Delegate a task (plain-English goal) to the interpreter layer.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "request": {"type": "string", "description": "plain-English goal"},
+                    "request": {"type": "string"},
                 },
                 "required": ["request"],
             },
@@ -277,9 +261,7 @@ _SHELL_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "cd",
-            "description": "Change the working directory. Relative paths "
-                           "resolve against it; '.' is current, '..' goes up, "
-                           "'~' is the user's home. e.g. cd(path=\"Documents\").",
+            "description": "Change the working directory. '.'=current, '..'=up, '~'=home.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -301,8 +283,7 @@ _SHELL_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "shutdown",
-            "description": "Shut the system down. Refuses if the system has "
-                           "been up less than 2 minutes.",
+            "description": "Shut the system down. Refuses if uptime < 2 minutes.",
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -310,15 +291,11 @@ _SHELL_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "create_user",
-            "description": "Create a user account and its home directory "
-                           "(Downloads, Documents, .asrc). Only used during "
-                           "first-boot setup.",
+            "description": "Create a user account and home directory. First-boot only.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "username": {"type": "string",
-                                 "description": "the login name (letters, "
-                                                "numbers, underscores only)"},
+                    "username": {"type": "string"},
                     "password": {"type": "string"},
                 },
                 "required": ["username"],
@@ -332,8 +309,7 @@ _INTERPRETER_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "run",
-            "description": "Run a command in the busybox shell. You are "
-                           "chrooted in the sandbox — all commands are safe.",
+            "description": "Run a command in the busybox shell. You are chrooted in the sandbox.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -347,8 +323,7 @@ _INTERPRETER_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "list",
-            "description": "List files and directories inside a path. "
-                           "Sort by 'size' (largest first), 'name', or 'mtime'.",
+            "description": "List files/dirs in a path. sort=size|name|mtime|none. top=N limits.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -397,7 +372,7 @@ _INTERPRETER_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "append",
-            "description": "Append text to a file (create it if missing).",
+            "description": "Append text to a file (create if missing).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -448,11 +423,7 @@ _INTERPRETER_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "ask",
-            "description": "Ask the user a question and get an answer. "
-                           "Use this to interact with the user mid-turn — "
-                           "e.g. to clarify inputs, confirm actions, or run "
-                           "an interactive loop. choices is an optional list "
-                           "the user can pick from.",
+            "description": "Ask the user a question. Use for interactive loops and clarifying inputs.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -467,10 +438,7 @@ _INTERPRETER_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "draw",
-            "description": "Render a UI panel with asui. spec is a dict: "
-                           "{'title': str, 'lines': [str], 'boxes': "
-                           "[{'x','y','w','h'}], 'status': str}. Draws to the "
-                           "terminal/framebuffer.",
+            "description": "Render a UI panel with asui: {'title','lines','boxes','status'}.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -483,7 +451,6 @@ _INTERPRETER_TOOL_SCHEMAS = [
     },
 ]
 
-# Keep TOOLS as shell tools for backward compat (bench scripts import it)
 TOOLS = [t for t in _SHELL_TOOL_SCHEMAS if t["function"]["name"] != "interpret"]
 TOOLS = [t for t in TOOLS if t["function"]["name"] != "delete"]
 TOOLS = [t for t in TOOLS if t["function"]["name"] != "move"]

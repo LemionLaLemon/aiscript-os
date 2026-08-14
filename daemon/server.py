@@ -175,7 +175,7 @@ class Daemon:
     def new_session(self, name, temp=None, tools=None, system_prompt=None,
                     max_tokens=None, max_loops=None, time_budget=None,
                     layer="shell", keep_tool_msgs=False, tool_choice=None,
-                    temp_session=False):
+                    temp_session=False, cwd=None):
         engine = self.engine
         prompt = system_prompt or self.shell_prompt()
         toolset = tools if tools is not None else SHELL_TOOLS
@@ -198,6 +198,7 @@ class Daemon:
             keep_tool_msgs=keep_tool_msgs,
             tool_choice=tool_choice,
             temp_session=temp_session,
+            cwd=cwd,
         )
         self.sessions[name] = sess
         return sess

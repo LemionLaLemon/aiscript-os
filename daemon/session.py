@@ -12,6 +12,14 @@ class Session:
 
     MAX_TOOL_LOOPS = 16
 
+    # Tools whose result IS the answer to an action request. After one of
+    # these runs on an ACTION turn, returning the result directly avoids a
+    # second model round (which is where repeated-tool-call spirals start).
+    TERMINAL_TOOLS = {
+        "list", "read", "info", "calc", "search", "pwd", "cd",
+        "write", "append", "mkdir", "delete", "move", "copy",
+    }
+
     def __init__(self, engine, executor, system_prompt, slot=0, temp=0.15,
                  chaos=None, name="session", log=None, tools=None,
                  max_tokens=None, max_loops=None, time_budget=None,
@@ -38,8 +46,9 @@ class Session:
         self.temp_session = temp_session
         self.name_locked = False
         self._auto_name_turns = 0
-        # working directory (jail-relative, e.g. "home/demo/Documents")
-        self.cwd = cwd or self._default_cwd()
+        # working directory (jail-relative, e.g. "home/demo/Documents";
+        # "" = jail root — used by vibe sub-sessions that write to /packages)
+        self.cwd = self._default_cwd() if cwd is None else cwd
 
     # ---- public ------------------------------------------------------------
 
@@ -180,7 +189,7 @@ class Session:
             return self._default_cwd() + "/" + path[2:]
         if path.startswith("/"):
             return path.lstrip("/")
-        return self.cwd + "/" + path
+        return (self.cwd + "/" + path).lstrip("/")
 
     def _exec_cd(self, path):
         """Handle the cd tool: validate the target dir and update cwd."""
@@ -276,6 +285,20 @@ class Session:
                 last_user = m.get("content") or ""
                 break
         tool_choice = self._effective_tool_choice(last_user)
+        # An ACTION turn is forced (tool_choice="required") so the model acts
+        # instead of narrating. But once a tool has actually run and produced
+        # a result, forcing tool calls on later rounds makes the model re-call
+        # the same tool instead of answering (the "repeated tool call" spiral).
+        # Downgrade to "auto" after the first executed tool so it can stop.
+        acted = [False]
+        short_circuited = [False]
+        # Cap how many reasoning tokens each round may burn. The model
+        # otherwise spends its full 400-token budget thinking on EVERY round,
+        # even a post-tool "answer the user now" round. ACTION first rounds
+        # need a little reasoning to pick the right tool; after that, the
+        # answer round needs almost none.
+        budget_round0 = int(self.engine.cfg.get("reasoning_budget_first", 64))
+        budget_after_act = int(self.engine.cfg.get("reasoning_budget_after", 32))
 
         # Emit thinking phase
         on_event({"type": "phase", "state": "thinking", "layer": self.layer})
@@ -288,11 +311,24 @@ class Session:
                 )
             events = []
             hook = lambda e: (events.append(e), all_events.append(e), on_event(e))
+            # Sessions with an EXPLICIT tool_choice ("required"/"auto" set at
+            # construction — OOBE, vibe, interpreter) are rigid scripts: they
+            # must keep forcing tools until done. Only per-turn-classified
+            # shell turns (tool_choice=None at construction) downgrade to
+            # "auto" after the first tool, so a one-tool action can stop and
+            # answer instead of re-calling tools forever.
+            if self.tool_choice is None:
+                choice = "auto" if acted[0] else tool_choice
+                rbudget = budget_after_act if acted[0] else budget_round0
+            else:
+                choice = tool_choice
+                rbudget = int(self.engine.cfg.get(
+                    "reasoning_budget_subsession", 256))
             try:
                 msg = self.engine.chat(
                     self._request_messages(), tools=self.tools, temp=self.temp,
                     slot=self.slot, max_tokens=self.max_tokens, on_event=hook,
-                    tool_choice=tool_choice,
+                    tool_choice=choice, reasoning_budget=rbudget,
                 )
             except ContextOverflow:
                 self._log("context overflow — compacting history and retrying")
@@ -300,7 +336,7 @@ class Session:
                 msg = self.engine.chat(
                     self._request_messages(), tools=self.tools, temp=self.temp,
                     slot=self.slot, max_tokens=self.max_tokens, on_event=hook,
-                    tool_choice=tool_choice,
+                    tool_choice=choice, reasoning_budget=rbudget,
                 )
             if not msg.get("tool_calls"):
                 # The model sometimes writes a tool call as plain text (e.g.
@@ -327,6 +363,7 @@ class Session:
                     self.messages.append(msg)
                     on_event({"type": "phase", "state": "running"})
                     recent_calls.append((tool, args))
+                    acted[0] = True
                     if len(recent_calls) > 4:
                         recent_calls.pop(0)
                     self._run_tool(tool, args, i, recent_calls, hook)
@@ -396,10 +433,43 @@ class Session:
                         "_tool": tool,
                     })
                     continue
+                acted[0] = True
                 result = self._run_tool(tool, args, i, recent_calls, hook)
+                # Short-circuit: on a classified SHELL ACTION turn (no explicit
+                # tool_choice), the FIRST tool call is usually the whole task.
+                # list/read/info/calc/search/pwd/cd/write/etc. return the answer
+                # directly — don't burn another model round re-summarising it
+                # (that round is where the "repeated tool call" spiral lives).
+                # Only continue looping for compound tools (spawn/vibe/interpret/
+                # ask) or when the model explicitly asked for more than one call.
+                # Script sessions (OOBE/vibe/interpreter, which carry an
+                # explicit tool_choice) are excluded: they legitimately do many
+                # tool calls and short-circuiting would cut them off early.
+                if (not short_circuited[0] and self.tool_choice is None
+                        and tool_choice == "required"
+                        and tool in Session.TERMINAL_TOOLS
+                        and not self._result_is_error(result)):
+                    short_circuited[0] = True
+                    on_event({"type": "phase", "state": "answering",
+                              "layer": self.layer})
+                    return result
         return "(agent loop ran too long; giving up)"
 
     # ---- internals -----------------------------------------------------------
+
+    @staticmethod
+    def _result_is_error(result):
+        """A tool result is an error if it's an error/refusal/empty string —
+        in which case short-circuiting would answer with the error. A clean
+        listing (even "no entries") is NOT an error — it's the answer."""
+        if not result:
+            return True
+        r = result.strip()
+        return r.startswith("[error]") or r.startswith("[cd] ") \
+            or "not a directory" in r or "no such file" in r \
+            or "cannot create" in r or "escapes the sandbox" in r \
+            or "not supported" in r or "does not exist" in r \
+            or "not found" in r or "invalid" in r
 
     def _run_tool(self, tool, args, idx, recent_calls, hook=None):
         """Execute a parsed tool call, emitting events and recording the

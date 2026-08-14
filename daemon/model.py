@@ -152,7 +152,8 @@ class ModelEngine:
 
     # ---- low level --------------------------------------------------------
 
-    def _payload(self, messages, tools, temp, slot, max_tokens, tool_choice):
+    def _payload(self, messages, tools, temp, slot, max_tokens, tool_choice,
+                 reasoning_budget=None):
         body = {
             "model": self.model,
             "messages": messages,
@@ -162,6 +163,11 @@ class ModelEngine:
             "max_tokens": max_tokens,
             "id_slot": slot,
         }
+        if reasoning_budget is not None:
+            # Override the server-level --reasoning-budget for this request.
+            # The model otherwise burns its full 400-token budget thinking on
+            # every round, even when it just needs to answer after a tool.
+            body["reasoning_budget"] = reasoning_budget
         if tools:
             body["tools"] = tools
         if tool_choice:
@@ -169,12 +175,12 @@ class ModelEngine:
         return body
 
     def chat(self, messages, tools=None, temp=0.15, slot=0, max_tokens=None,
-             on_event=None, tool_choice="auto"):
+             on_event=None, tool_choice="auto", reasoning_budget=None):
         """Run one completion. Streams events via on_event and returns the
         full assistant message dict ({role, content?, tool_calls?})."""
         max_tokens = max_tokens or self.cfg.get("max_tokens", 1024)
         body = self._payload(messages, tools, temp, slot, max_tokens,
-                             tool_choice)
+                             tool_choice, reasoning_budget)
         try:
             return self._chat_stream(body, tools, on_event)
         except ModelError:
