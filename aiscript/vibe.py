@@ -182,14 +182,25 @@ def _install(daemon, pkgs, target, action, flags):
         elif os.path.exists(entry) or os.path.exists(manifest):
             written = True
         if not written:
-            try:
-                os.rmdir(pkg_dir)  # clean up an empty, failed install
-            except OSError:
-                pass
-            return (
-                f"vibe ran but {target} is incomplete (missing {target}.as or "
-                f"{target}.aconf). {result}"
-            )
+            # First attempt produced nothing usable. The vibecoder sometimes
+            # gets stuck in a repetition spiral (a reasoning-model quirk) and
+            # returns empty. One corrective retry with a stronger kick before
+            # giving up.
+            result = _retry_vibecode(daemon, sub, pkg_dir, target, result,
+                                     "no files were written")
+            written = _recover_from_dump(daemon, pkg_dir, target, result)
+            if written:
+                entry = os.path.join(pkg_dir, f"{target}.as")
+                manifest = os.path.join(pkg_dir, f"{target}.aconf")
+            else:
+                try:
+                    os.rmdir(pkg_dir)  # clean up an empty, failed install
+                except OSError:
+                    pass
+                return (
+                    f"vibe ran but {target} is incomplete (missing {target}.as "
+                    f"or {target}.aconf). {result}"
+                )
 
     # Validate the .as file isn't a stub
     err = _validate_as_file(entry)
