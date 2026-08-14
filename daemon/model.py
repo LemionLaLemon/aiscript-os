@@ -19,41 +19,57 @@ def _strip_invisible(text):
 def _detect_repetition(content, recent, window=200):
     """Return True if the tail of `content` looks like a degenerate
     repetition loop (the model repeating a short phrase over and over).
-    `recent` is a list of recently-emitted text chunks."""
-    tail = content[-window:]
-    if len(tail) < 40:
+    `recent` is a list of recently-emitted text chunks.
+
+    Only fires on TRUE spirals: an unbroken run of identical content at the
+    very END of the stream, with nothing new following it. Repetition that
+    occurs earlier in legitimate multi-line output (code with similar lines,
+    a poem, a repeated intro sentence before the real answer) is NOT a spiral.
+    """
+    if not content or len(content) < 20:
         return False
-    # count how much of the tail is covered by its most common line
+    # Work on the tail window.
+    tail = content[-window:]
     lines = [l for l in tail.splitlines() if l.strip()]
-    if not lines:
+    # Substring repetition on a SINGLE line: the whole tail is one giant
+    # repeated paragraph with no real line breaks (e.g. "...one line
+    # summary. one line summary. one line summary..."). This is a strong
+    # spiral signal regardless of newline count.
+    if lines:
+        flat = re.sub(r'\s+', ' ', tail)
+        if len(flat) >= 200:
+            lead = re.split(r'(?<=[.!?\]\}]) ', flat)
+            if len(lead) >= 2:
+                fp = lead[0] + ' ' + lead[1]
+                if len(fp) >= 40 and flat.count(fp) >= 3 \
+                        and flat.rstrip().endswith(fp[-30:]):
+                    return True
+    if len(lines) < 4:
         return False
     unique = set(lines)
-    if len(unique) <= 2 and len(lines) >= 6:
+    # A true spiral's tail is dominated by one line repeated back-to-back.
+    # Require the LAST line to be part of a run of 3+ identical lines at the
+    # very end (the model is stuck on it right now).
+    last = lines[-1]
+    if len(last) < 2:
+        return False
+    run = 0
+    for l in reversed(lines):
+        if l == last:
+            run += 1
+        else:
+            break
+    if run >= 3:
         return True
-    # also flag a repeating character pattern (e.g. the same line twice)
-    if len(lines) >= 4 and len(unique) * 2 <= len(lines):
-        return True
-    # Block repetition: a long content line repeats at intervals with short
-    # separator lines (e.g. "...ANSWER\\n</think>\\n" wedged between repeats
-    # of the real sentence). Count how often any long line repeats.
+    # Block repetition: a long line repeats 3+ times AND the final line is
+    # one of the repeats (i.e. the model is looping that line, not writing
+    # fresh code after it).
     long_lines = [l for l in lines if len(l) >= 15]
-    if len(long_lines) >= 3:
+    if len(long_lines) >= 3 and last in long_lines:
         from collections import Counter
         counts = Counter(long_lines)
-        if counts.most_common(1)[0][1] >= 3:
+        if counts[last] >= 3:
             return True
-    # Substring repetition: the model emits a repeated paragraph on ONE line
-    # with markers like "[options] ?" / "[END OF MESSAGE]" between copies.
-    # Take the first ~2 sentences as a fingerprint and count repeats in the
-    # tail. Use a bigger window (400) so 3+ full copies fit. Three repeats of
-    # the opening is a strong spiral signal; two could be a legit reply.
-    flat = re.sub(r'\s+', ' ', content[-400:])
-    if len(flat) >= 160:
-        lead = re.split(r'(?<=[.!?\]\}]) ', flat)
-        if len(lead) >= 2:
-            fp = lead[0] + ' ' + lead[1]
-            if len(fp) >= 40 and flat.count(fp) >= 3:
-                return True
     return False
 
 
@@ -250,12 +266,6 @@ class ModelEngine:
                     # phrase forever instead of stopping. Cut the stream so
                     # we don't wait out the whole generation.
                     if _detect_repetition(content, None):
-                        try:
-                            with open("/tmp/opencode/repeat_dbg.txt", "a") as _f:
-                                _f.write("=== TRIGGERED ===\n")
-                                _f.write(repr(content[-300:]) + "\n\n")
-                        except OSError:
-                            pass
                         self._log("repetition loop detected — truncating")
                         break
             for tc in delta.get("tool_calls") or []:

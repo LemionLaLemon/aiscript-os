@@ -113,6 +113,18 @@ class Session:
         r'folder)\b',
         re.IGNORECASE)
 
+    # "write a poem / write me a story / write a letter" — creative requests
+    # that need NO tool. Only "write X to Y" / "write file" style are actions.
+    # Handles qualifiers: "a 5 line poem", "a short story", "a funny joke".
+    _CREATIVE_WRITE_RE = re.compile(
+        r'^write\s+(?:me\s+)?(?:a|an|some|another|the\s+)?'
+        r'(?:\w+\s+)*?'
+        r'(poem|poems|story|stories|essay|essays|letter|letters|song|songs|'
+        r'haiku|joke|jokes|riddle|riddles|code|program|script|function|class|'
+        r'todo|note|notes|recipe|recipes|list|list of|paragraph|paragraphs|'
+        r'summary|summaries|draft|drafts|email|emails|message|messages)\b',
+        re.IGNORECASE)
+
     _WHAT_IN_RE = re.compile(
         r"^what('s| is| are)\s+in\b",
         re.IGNORECASE)
@@ -137,6 +149,13 @@ class Session:
         if not t:
             return "auto"
         if cls._TRIVIAL_RE.match(t):
+            return "auto"
+        if cls._CREATIVE_WRITE_RE.match(t):
+            # "write a poem/story/letter/code..." is creative output, not a
+            # file op. EXCEPT when it's writing to a specific file/path.
+            if re.search(r'\b(to|into|in|as)\s+[\w./~-]+\.(as|ais|aconf|txt|md|am)\b',
+                         t, re.IGNORECASE):
+                return "required"
             return "auto"
         if cls._ACTION_HINT_RE.search(t):
             return "required"
