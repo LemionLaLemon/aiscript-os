@@ -12,14 +12,6 @@ class Session:
 
     MAX_TOOL_LOOPS = 16
 
-    # Tools whose result IS the answer to an action request. After one of
-    # these runs on an ACTION turn, returning the result directly avoids a
-    # second model round (which is where repeated-tool-call spirals start).
-    TERMINAL_TOOLS = {
-        "list", "read", "info", "calc", "search", "pwd", "cd",
-        "write", "append", "mkdir", "delete", "move", "copy",
-    }
-
     def __init__(self, engine, executor, system_prompt, slot=0, temp=0.15,
                  chaos=None, name="session", log=None, tools=None,
                  max_tokens=None, max_loops=None, time_budget=None,
@@ -291,7 +283,6 @@ class Session:
         # the same tool instead of answering (the "repeated tool call" spiral).
         # Downgrade to "auto" after the first executed tool so it can stop.
         acted = [False]
-        short_circuited = [False]
         # Cap how many reasoning tokens each round may burn. The model
         # otherwise spends its full 400-token budget thinking on EVERY round,
         # even a post-tool "answer the user now" round. ACTION first rounds
@@ -434,42 +425,10 @@ class Session:
                     })
                     continue
                 acted[0] = True
-                result = self._run_tool(tool, args, i, recent_calls, hook)
-                # Short-circuit: on a classified SHELL ACTION turn (no explicit
-                # tool_choice), the FIRST tool call is usually the whole task.
-                # list/read/info/calc/search/pwd/cd/write/etc. return the answer
-                # directly — don't burn another model round re-summarising it
-                # (that round is where the "repeated tool call" spiral lives).
-                # Only continue looping for compound tools (spawn/vibe/interpret/
-                # ask) or when the model explicitly asked for more than one call.
-                # Script sessions (OOBE/vibe/interpreter, which carry an
-                # explicit tool_choice) are excluded: they legitimately do many
-                # tool calls and short-circuiting would cut them off early.
-                if (not short_circuited[0] and self.tool_choice is None
-                        and tool_choice == "required"
-                        and tool in Session.TERMINAL_TOOLS
-                        and not self._result_is_error(result)):
-                    short_circuited[0] = True
-                    on_event({"type": "phase", "state": "answering",
-                              "layer": self.layer})
-                    return result
+                self._run_tool(tool, args, i, recent_calls, hook)
         return "(agent loop ran too long; giving up)"
 
     # ---- internals -----------------------------------------------------------
-
-    @staticmethod
-    def _result_is_error(result):
-        """A tool result is an error if it's an error/refusal/empty string —
-        in which case short-circuiting would answer with the error. A clean
-        listing (even "no entries") is NOT an error — it's the answer."""
-        if not result:
-            return True
-        r = result.strip()
-        return r.startswith("[error]") or r.startswith("[cd] ") \
-            or "not a directory" in r or "no such file" in r \
-            or "cannot create" in r or "escapes the sandbox" in r \
-            or "not supported" in r or "does not exist" in r \
-            or "not found" in r or "invalid" in r
 
     def _run_tool(self, tool, args, idx, recent_calls, hook=None):
         """Execute a parsed tool call, emitting events and recording the

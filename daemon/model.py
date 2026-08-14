@@ -250,6 +250,12 @@ class ModelEngine:
                     # phrase forever instead of stopping. Cut the stream so
                     # we don't wait out the whole generation.
                     if _detect_repetition(content, None):
+                        try:
+                            with open("/tmp/opencode/repeat_dbg.txt", "a") as _f:
+                                _f.write("=== TRIGGERED ===\n")
+                                _f.write(repr(content[-300:]) + "\n\n")
+                        except OSError:
+                            pass
                         self._log("repetition loop detected — truncating")
                         break
             for tc in delta.get("tool_calls") or []:

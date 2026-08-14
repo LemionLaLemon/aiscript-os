@@ -2,6 +2,7 @@ import ast
 import math
 import os
 import resource
+import shlex
 import shutil
 import subprocess
 import time
@@ -498,7 +499,9 @@ class ToolRefusal(Exception):
 # ---- chroot runner for interpreter ----------------------------------------
 
 def _chroot_run(jail, command, cwd="."):
-    """Run command chrooted inside jail using unshare -r (user namespace)."""
+    """Run command chrooted inside jail using unshare -r (user namespace).
+    `cwd` is a jail-relative path (e.g. 'home/demo/Documents'); inside the
+    chroot that is an absolute path rooted at '/'. Empty cwd = jail root."""
     env = {
         "PATH": "/bin:/usr/bin:/sbin:/usr/sbin",
         "HOME": "/home",
@@ -506,11 +509,17 @@ def _chroot_run(jail, command, cwd="."):
         "LANG": "C",
     }
     env_str = " ".join(f'{k}="{v}"' for k, v in env.items())
+    chroot_cwd = "/" + str(cwd).lstrip("/") if str(cwd).strip() else "/"
+    # Build a single shell script that cds then runs the command. We hand the
+    # script to /bin/sh via a file-less stdin-free form: use sh -c with the
+    # script quoted with double quotes and escaped, to avoid the nested
+    # single-quote breakage that previously split the command mid-way.
+    script = f"cd {shlex.quote(chroot_cwd)} && {command}"
     try:
         proc = subprocess.run(
             ["unshare", "--user", "--map-root-user",
              "chroot", jail, "/bin/sh", "-c",
-             f"{env_str} /bin/sh -c 'cd {repr(cwd)[1:-1]} && {repr(command)}'"],
+             f"{env_str} /bin/sh -c {shlex.quote(script)}"],
             capture_output=True, timeout=10,
             preexec_fn=_limit_rlimits,
         )
