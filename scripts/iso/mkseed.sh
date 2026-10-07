@@ -14,7 +14,7 @@ mkdir -p "$SEED/jail/etc/as-os" \
 # ---- jail config -------------------------------------------------------------
 echo "demo" > "$SEED/jail/etc/as-os/user"
 echo "demo" > "$SEED/jail/etc/as-os/configured"
-echo "${ASCOS_MODEL:-LFM2.5-8B-A1B-Q4_K_M.gguf}" > "$SEED/jail/etc/as-os/model"
+echo "${ASCOS_MODEL:-LFM2.5-2.6B-Q4_K_M.gguf}" > "$SEED/jail/etc/as-os/model"
 # Engine config. The FULL config (4 slots x 8192 ctx) is the real-hardware
 # default — the shell alone needs ~5k tokens for system prompt + tools, so
 # lean settings overflow on start. Set LEAN=1 (or ASCOS_CTX/SLOTS) only for

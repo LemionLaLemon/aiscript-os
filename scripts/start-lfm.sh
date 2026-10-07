@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Start llama-server with the LFM2.5-8B-A1B model (spike default candidate).
+# Start llama-server with the LFM2.5-2.6B model (the ascOS brain).
 # Same P-core pinning as start-server.sh; LFM's recommended sampling flags.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 BIN=tools/llama.cpp/llama-b10333
-MODEL=${MODEL:-models/LFM2.5-8B-A1B-Q4_K_M.gguf}
+MODEL=${MODEL:-models/LFM2.5-2.6B-Q4_K_M.gguf}
 PORT=${PORT:-8081}
 CTX=${CTX:-8192}        # context PER SLOT
 THREADS=${THREADS:-4}

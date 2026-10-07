@@ -46,20 +46,12 @@ if [ ! -e /data/.seeded ]; then
     touch /data/.seeded
 fi
 
-# Model selection: first boot asks; every boot reads the jail config.
+# Model selection: first boot seeds the default brain (LFM2.5-2.6B — the
+# only model ascOS ships); every boot reads the jail config.
 MODEL_FILE=/data/jail/etc/as-os/model
 if [ ! -e "$MODEL_FILE" ]; then
-    echo ""
-    echo "  which brain do you want?"
-    echo "    1) 8B  (the full ascOS experience — needs ~8GB RAM)"
-    echo "    2) 1.2B  (lightweight — runs on ~2GB RAM)"
-    echo -n "  choice [1]: "
-    read MODEL_CHOICE
     mkdir -p "$(dirname "$MODEL_FILE")"
-    case "$MODEL_CHOICE" in
-        2) echo "LFM2.5-1.2B-Instruct-Q4_K_M.gguf" > "$MODEL_FILE" ;;
-        *) echo "LFM2.5-8B-A1B-Q4_K_M.gguf" > "$MODEL_FILE" ;;
-    esac
+    echo "LFM2.5-2.6B-Q4_K_M.gguf" > "$MODEL_FILE"
 fi
 
 # The jail's writable parts (home, packages, config) live on the data
@@ -71,7 +63,7 @@ done
 
 log "starting the engine"
 export LD_LIBRARY_PATH=/opt/as-os/tools/llama.cpp/llama-b10333
-MODEL=$(cat "$MODEL_FILE" 2>/dev/null || echo "LFM2.5-8B-A1B-Q4_K_M.gguf")
+MODEL=$(cat "$MODEL_FILE" 2>/dev/null || echo "LFM2.5-2.6B-Q4_K_M.gguf")
 PORT=8080
 
 # Engine sizing is read from /data/jail/etc/as-os/engine.conf so a lean VM

@@ -61,7 +61,7 @@ class Daemon:
                 return name
         except OSError:
             pass
-        return self.llama_cfg.get("model_name", "LFM2.5-8B-A1B-Q4_K_M.gguf")
+        return self.llama_cfg.get("model_name", "LFM2.5-2.6B-Q4_K_M.gguf")
 
     def available_models(self):
         """Model files shipped in the image's models dir."""
@@ -91,20 +91,38 @@ class Daemon:
         The image's init also does this at boot; on a host, this is a no-op
         if no engine is running under our control."""
         import signal
+        socket = __import__("socket")
         import subprocess as _sp
+        port = int(self.llama_cfg.get("port", 8080))
         # find and stop our engine
+        killed = False
         try:
             pid = int(open("/tmp/as-os-engine.pid").read().strip())
             try:
                 os.kill(pid, signal.SIGTERM)
+                killed = True
             except ProcessLookupError:
                 pass
         except (OSError, ValueError):
             pass
+        if not killed:
+            # No usable pid file (stale, or the engine was started outside
+            # init/start-server.sh) — kill by port so the replacement can bind.
+            _sp.call(["pkill", "-f", rf"llama-server.*--port {port}\b"],
+                     stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+        # Wait for the port to actually free up (up to ~5s) before starting
+        # the replacement, otherwise it dies with "address already in use".
+        for _ in range(25):
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.2)
+            busy = s.connect_ex(("127.0.0.1", port)) == 0
+            s.close()
+            if not busy:
+                break
+            time.sleep(0.2)
         # start a new one in the background
         bin_dir = self.llama_cfg.get("bin_dir", "tools/llama.cpp/llama-b10333")
         model_path = os.path.join("models", name)
-        port = int(self.llama_cfg.get("port", 8080))
         threads = int(self.llama_cfg.get("threads", 4))
         slots = int(self.llama_cfg.get("slots", 4))
         mask = self.llama_cfg.get("cpu_mask", "0,2,4,6")

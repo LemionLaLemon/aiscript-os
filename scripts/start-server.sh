@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Start llama-server with the as-os model (LFM2.5-8B-A1B).
+# Start llama-server with the as-os model (LFM2.5-2.6B).
 # Uses only the physical P-cores (this laptop: 4P + 4E), which measured fastest.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 BIN=tools/llama.cpp/llama-b10333
-MODEL=${MODEL:-models/LFM2.5-8B-A1B-Q4_K_M.gguf}
+MODEL=${MODEL:-models/LFM2.5-2.6B-Q4_K_M.gguf}
 PORT=${PORT:-8080}
 CTX=${CTX:-8192}        # context PER SLOT
 THREADS=${THREADS:-4}
@@ -17,6 +17,10 @@ REASON_BUDGET=${REASON_BUDGET:-400}
 
 # llama-server splits -c across --parallel slots, so pass the total.
 TOTAL_CTX=$((CTX * SLOTS))
+
+# Remember our pid so `model set` (daemon/server.py:_restart_engine) can
+# stop this engine cleanly — it execs, so $$ becomes llama-server's pid.
+echo $$ > /tmp/as-os-engine.pid 2>/dev/null || true
 
 exec taskset -c "$MASK" env LD_LIBRARY_PATH="$BIN" "$BIN/llama-server" \
   -m "$MODEL" \

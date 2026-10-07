@@ -5,7 +5,7 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="$ROOT/tools/llama.cpp/llama-b10333"
-MODEL="${MODEL:-models/LFM2.5-8B-A1B-Q4_K_M.gguf}"
+MODEL="${MODEL:-models/LFM2.5-2.6B-Q4_K_M.gguf}"
 
 action="$1"; shift
 PORT="$1"; shift

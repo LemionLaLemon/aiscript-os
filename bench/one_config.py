@@ -3,7 +3,7 @@
 
 Usage:
   python3 bench/one_config.py --label "baseline" \
-      [--model models/LFM2.5-8B-A1B-Q4_K_M.gguf] \
+      [--model models/LFM2.5-2.6B-Q4_K_M.gguf] \
       [--draft models/LFM2.5-1.2B-Instruct-Q4_K_M.gguf] \
       [--spec-n-max 6] [--port 8090] [--csv benchmarks/results.csv]
 
@@ -71,7 +71,7 @@ def speed(port, n=600):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--label", required=True)
-    ap.add_argument("--model", default="models/LFM2.5-8B-A1B-Q4_K_M.gguf")
+    ap.add_argument("--model", default="models/LFM2.5-2.6B-Q4_K_M.gguf")
     ap.add_argument("--draft", default=None)
     ap.add_argument("--spec-n-max", type=int, default=0)
     ap.add_argument("--port", type=int, default=8090)
