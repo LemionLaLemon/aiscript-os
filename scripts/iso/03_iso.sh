@@ -14,6 +14,53 @@ echo "==> staging directories..."
 rm -rf "$STAGE"
 mkdir -p "$STAGE"/{boot/grub,isolinux,data}
 
+# ---------------------------------------------------------------------------
+# Populate the rootfs with everything ascOS needs at runtime. This must run
+# on EVERY squashfs build so code/model changes reach the image (the rootfs
+# itself only gets rebuilt when pacstrap runs).
+# ---------------------------------------------------------------------------
+OPT="$R/opt/as-os"
+echo "==> populating /opt/as-os + /sbin/init..."
+rm -rf "$OPT"
+mkdir -p "$OPT/tools/llama.cpp" "$OPT/models" "$OPT/packages"
+
+# the OS init (switch_root execs /sbin/init inside the image)
+install -m 755 "$ROOT/scripts/iso/init.sh" "$R/sbin/init"
+
+# python runtime: shell + daemon + aiscript + ui
+cp -a "$ROOT/daemon" "$ROOT/shell" "$ROOT/aiscript" "$ROOT/asui" "$OPT/"
+cp -a "$ROOT/config.toml" "$OPT/"
+[ -e "$ROOT/LICENSE" ] && cp -a "$ROOT/LICENSE" "$OPT/" || true
+
+# runtime data: jail skeleton (home/packages/etc get bind-mounted over at
+# boot), manual pages, template packages
+cp -a "$ROOT/jail" "$OPT/jail"
+cp -a "$ROOT/share" "$OPT/share"
+cp -a "$ROOT/essential" "$OPT/essential"
+cp -a "$ROOT/scripts" "$OPT/scripts"
+
+# llama-server binary dir only (never the llama.cpp source tree)
+cp -a "$ROOT/tools/llama.cpp/llama-b10333" "$OPT/tools/llama.cpp/"
+
+# the brain — only the model ascOS ships (2.6B; hardlink to save 1.6GB)
+MODEL="${ASCOS_MODEL:-LFM2.5-2.6B-Q4_K_M.gguf}"
+if [ ! -e "$ROOT/models/$MODEL" ]; then
+    echo "ERROR: model $ROOT/models/$MODEL not found" >&2
+    exit 1
+fi
+cp -al "$ROOT/models/$MODEL" "$OPT/models/" 2>/dev/null || \
+    cp -a "$ROOT/models/$MODEL" "$OPT/models/"
+
+# first-boot seed — init.sh copies /opt/as-os/seed onto an empty data
+# partition (the make test / vbox flow has no seed on the data disk).
+if [ -d "$ROOT/build/seed" ]; then
+    cp -a "$ROOT/build/seed" "$OPT/seed"
+else
+    echo "WARNING: build/seed missing — run 'make seed' (first boot will fail)"
+fi
+
+du -sh "$OPT"
+
 echo "==> building squashfs root..."
 rm -f "$STAGE/boot/root.squashfs"
 mksquashfs "$R" "$STAGE/boot/root.squashfs" \

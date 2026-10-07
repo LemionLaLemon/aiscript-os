@@ -2,7 +2,8 @@
 # Build the ascOS rootfs: pacstrap a minimal Arch base, then strip it down
 # to a bare AI-only system. Requires root.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+# cd to the PROJECT ROOT (this script lives in scripts/iso/).
+cd "$(dirname "$0")/../.."
 
 ROOTFS="build/rootfs"
 SUDO=""

@@ -3,7 +3,8 @@
 # escape hatch (compilers, package manager, ssh, sudo, network config) or
 # that we don't ship on a 6GB image (docs, locales, python test suites).
 set -euo pipefail
-cd "$(dirname "$0")/.."
+# cd to the PROJECT ROOT (this script lives in scripts/iso/).
+cd "$(dirname "$0")/../.."
 R=build/rootfs
 
 echo "==> removing escape-hatch / bloat packages..."
@@ -12,7 +13,11 @@ rm -rf "$R/usr/bin/gcc" "$R/usr/bin/g++" "$R/usr/bin/cc" "$R/usr/bin/make"
 rm -rf "$R/usr/bin/pacman" "$R/usr/bin/ssh" "$R/usr/bin/sshd" "$R/usr/bin/sudo"
 rm -rf "$R/usr/bin/su" "$R/usr/bin/passwd" "$R/usr/bin/login"
 rm -rf "$R/usr/bin/git" "$R/usr/bin/vim" "$R/usr/bin/nano" "$R/usr/bin/vi"
-rm -rf "$R/usr/bin/python"* "$R/usr/bin/pip"* "$R/usr/lib/python"*/idlelib
+# python is KEPT — init.sh runs the whole OS via /usr/bin/python3 (health
+# check + as_shell.py); it is the system runtime, not an escape hatch, since
+# the AI's `run` tool is chrooted into jail/ which ships no python.
+# Strip pip (a package manager) and the bloat modules instead.
+rm -rf "$R/usr/bin/pip"* "$R/usr/lib/python"*/idlelib
 rm -rf "$R/usr/lib/python"*/test "$R/usr/lib/python"*/ensurepip
 rm -rf "$R/usr/lib/python"*/turtledemo
 

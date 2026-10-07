@@ -44,7 +44,8 @@ build/rootfs:
 
 squashfs: build/staging/boot/root.squashfs
 
-build/staging/boot/root.squashfs: build/rootfs scripts/iso/03_iso.sh
+# squashfs — depends on the seed so /opt/as-os/seed is present in the image
+build/staging/boot/root.squashfs: build/rootfs build/seed scripts/iso/03_iso.sh
 	mkdir -p build/staging
 	$(SUDO) bash scripts/iso/03_iso.sh
 
