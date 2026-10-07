@@ -464,35 +464,33 @@ class Session:
         })
         return result
 
+    # Leading-preamble-only leakage patterns. These match ONLY a reasoning
+    # chain that leaks before the real answer starts (8B-era artifact); they
+    # are deliberately narrow. Generic openers ("First,", "However,",
+    # "1. ...") must NEVER be stripped — they are legitimate content
+    # (numbered lists, essays) and stripping them ate the model's answers.
     _REASONING_PATTERNS = [
         re.compile(r'^The user asks?:', re.IGNORECASE),
-        re.compile(r'^We (need|can|should|must|have|are|want)', re.IGNORECASE),
-        re.compile(r'^However,', re.IGNORECASE),
-        re.compile(r'^So (we|the|I)', re.IGNORECASE),
-        re.compile(r'^The (previous|current|assistant|system)', re.IGNORECASE),
-        re.compile(r'^But (note|we|the)', re.IGNORECASE),
-        re.compile(r'^Now (we|the|I)', re.IGNORECASE),
-        re.compile(r'^Let me', re.IGNORECASE),
-        re.compile(r'^First,', re.IGNORECASE),
-        re.compile(r'^\d+\.\s', re.IGNORECASE),
+        re.compile(r'^We (need|can|should|must) (to |that )', re.IGNORECASE),
+        re.compile(r'^Let me (think|consider|re-read|check|look)', re.IGNORECASE),
     ]
 
     @classmethod
     def _strip_reasoning(cls, content):
-        """Remove LFM's reasoning-chain preamble that leaks into content tokens."""
+        """Drop a leading reasoning preamble if one leaked into content.
+        Only contiguous matching lines AT THE START are removed (up to the
+        first blank or non-matching line); the body is never touched."""
         if not content:
             return ""
         lines = content.split("\n")
-        clean = []
-        for line in lines:
-            stripped = line.strip()
-            if not stripped:
-                clean.append(line)
-                continue
-            if any(p.match(stripped) for p in cls._REASONING_PATTERNS):
-                continue
-            clean.append(line)
-        return "\n".join(clean).strip()
+        i = 0
+        while i < len(lines):
+            stripped = lines[i].strip()
+            if not stripped or not any(p.match(stripped)
+                                       for p in cls._REASONING_PATTERNS):
+                break
+            i += 1
+        return "\n".join(lines[i:]).strip()
 
     def _apply_chaos(self, tool, args):
         if self.chaos and tool in ("list", "read", "run", "search"):
