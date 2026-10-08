@@ -3,7 +3,12 @@ import os
 
 
 def build_shell_prompt(cfg, user=None):
-    """Return the full shell system prompt from config."""
+    """Return the full shell system prompt from config.
+
+    Volatile bits (uptime) go at the END: the prompt-cache warm-up and the
+    live session prompt must share a long identical prefix, and llama.cpp's
+    --cache-reuse reuses the common prefix even when the tail differs.
+    """
     root = os.path.dirname(os.path.dirname(__file__))
     policy_path = os.path.join(root, cfg["daemon"]["policy"])
     with open(policy_path) as f:
@@ -16,8 +21,8 @@ def build_shell_prompt(cfg, user=None):
         f"  /home/{user}       — the user's home (Downloads, Documents)\n"
         f"  /apps             — installed aiscript apps\n"
         f"  /packages         — vibecoded packages (managed by vibe only)\n"
-        f"{_installed_summary(jail)}\n"
-        f"System uptime so far: {_uptime()}.\n\n" + base
+        f"{_installed_summary(jail)}\n\n" + base +
+        f"\n\nSystem uptime so far: {_uptime()}."
     )
     return _delimit(body)
 
@@ -56,8 +61,8 @@ def build_interpreter_prompt(cfg, user=None):
     user = user or os.environ.get("USER", "user")
     body = (
         f"Your working directory is /home/{user} inside the sandbox.\n"
-        f"The user's home is /home/{user}. "
-        f"System uptime: {_uptime()}.\n\n" + base
+        f"The user's home is /home/{user}.\n\n" + base +
+        f"\n\nSystem uptime: {_uptime()}."
     )
     return _delimit(body)
 

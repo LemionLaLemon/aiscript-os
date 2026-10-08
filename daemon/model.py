@@ -16,6 +16,43 @@ def _strip_invisible(text):
     return _INVISIBLE_RE.sub("", text)
 
 
+def _separate_reasoning(content):
+    """Return (reasoning, answer) when reasoning tags leak into content.
+
+    Some llama.cpp reasoning templates put the reasoning in
+    ``reasoning_content``; others return ordinary content ending in
+    ``</think>`` without returning the opening tag. Buffering and separating
+    here prevents private scratch text and marker tokens from ever being
+    emitted as the answer or stored in history.
+    """
+    text = _strip_invisible(content or "")
+    thoughts = []
+
+    def take_block(match):
+        body = match.group(1).strip()
+        if body:
+            thoughts.append(body)
+        return ""
+
+    text = re.sub(r"(?is)<think>(.*?)</think>", take_block, text)
+    if "</think>" in text.lower():
+        # The common malformed form has no opening marker: everything before
+        # the final close marker is scratch reasoning; everything after is the
+        # user-facing answer.
+        pos = text.lower().rfind("</think>")
+        before, text = text[:pos].strip(), text[pos + len("</think>"):]
+        if before:
+            thoughts.append(before)
+    if "<think>" in text.lower():
+        pos = text.lower().find("<think>")
+        visible, trailing = text[:pos], text[pos + len("<think>"):]
+        if trailing.strip():
+            thoughts.append(trailing.strip())
+        text = visible
+    text = re.sub(r"(?i)</?think>", "", text).strip()
+    return "\n".join(thoughts).strip(), text
+
+
 def _detect_repetition(content, recent, window=200):
     """Return True if the tail of `content` looks like a degenerate
     repetition loop (the model repeating a short phrase over and over).
@@ -183,9 +220,18 @@ class ModelEngine:
             # Override the server-level --reasoning-budget for this request.
             # The model otherwise burns its full 400-token budget thinking on
             # every round, even when it just needs to answer after a tool.
-            body["reasoning_budget"] = reasoning_budget
+            # llama.cpp's OpenAI-compatible endpoint names this request field
+            # `reasoning_budget_tokens` (server-common.cpp); the shorter name
+            # is silently ignored, which previously made all per-turn budgets
+            # ineffective.
+            body["reasoning_budget_tokens"] = reasoning_budget
         if tools:
             body["tools"] = tools
+            # Let the agent observe each result before choosing another tool.
+            # llama.cpp otherwise enables parallel calls for this template;
+            # LFM used that freedom to turn plain `ls` into four recursive
+            # list calls in one response.
+            body["parallel_tool_calls"] = False
         if tool_choice:
             body["tool_choice"] = tool_choice
         return body
@@ -261,7 +307,6 @@ class ModelEngine:
                 tok = _strip_invisible(tok)
                 if tok:
                     content += tok
-                    emit({"type": "content", "text": tok})
                     # Degenerate repetition loop: the model repeats a short
                     # phrase forever instead of stopping. Cut the stream so
                     # we don't wait out the whole generation.
@@ -292,8 +337,14 @@ class ModelEngine:
                         "args": tool_calls[idx]["function"]["arguments"],
                     })
 
+        content = _trim_repetition(content)
+        leaked_reasoning, content = _separate_reasoning(content)
+        if leaked_reasoning:
+            emit({"type": "thinking", "text": leaked_reasoning})
         if not tool_calls:
-            return {"role": "assistant", "content": _trim_repetition(content)}
+            if content:
+                emit({"type": "content", "text": content})
+            return {"role": "assistant", "content": content}
         emit({"type": "tool-stream-end"})
         message = {"role": "assistant", "content": content or None}
         # normalise: only keep well-formed calls
@@ -329,8 +380,12 @@ class ModelEngine:
         resp.encoding = "utf-8"
         data = resp.json()
         msg = data["choices"][0]["message"]
-        if msg.get("content"):
-            msg["content"] = _strip_invisible(msg["content"])
+        if on_event and msg.get("reasoning_content"):
+            on_event({"type": "thinking", "text": msg["reasoning_content"]})
+        leaked_reasoning, content = _separate_reasoning(msg.get("content"))
+        msg["content"] = content or None
+        if on_event and leaked_reasoning:
+            on_event({"type": "thinking", "text": leaked_reasoning})
         if on_event and msg.get("content"):
             on_event({"type": "content", "text": msg["content"]})
         return msg

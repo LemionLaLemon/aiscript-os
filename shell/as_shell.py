@@ -1,14 +1,26 @@
 import os
+import json
 import re
+import shlex
+import shutil
 import sys
 import threading
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import readline
+import select
+import time
+try:
+    import termios
+    import tty
+except Exception:
+    termios = None
+    tty = None
 import tomllib
 
 from daemon.server import Daemon
+from shell import native_notepad
 import asui
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -57,6 +69,13 @@ class Shell:
         self._out = threading.Lock()
         self.show_thinking = cfg.get("daemon", {}).get("show_thinking", "on")
         self._content_started = False
+        # Track per-subsession line state for cleaner rendering
+        self._sub_at_line_start = {}  # tag -> bool
+        # TUI apps render into the terminal's alternate screen buffer.
+        self._in_alt = False
+        self._native_ui = False
+        self._turn_stop = None
+        self._tool_previews = set()
 
     # ---- event rendering --------------------------------------------------
 
@@ -68,7 +87,39 @@ class Shell:
     def _clear_line(self):
         self._write("\r\033[K")
 
+    @staticmethod
+    def _event_tag(tag):
+        return str(tag[-1]) if isinstance(tag, tuple) else str(tag)
+
+    @staticmethod
+    def _clip_terminal_line(text, reserve=1):
+        width = shutil.get_terminal_size(fallback=(80, 24)).columns
+        clean = re.sub(r"\s+", " ", str(text)).strip()
+        limit = max(20, width - reserve)
+        return clean if len(clean) <= limit else clean[:limit - 1] + "…"
+
+    def _tool_preview(self, scope, ev, color):
+        key = (scope, ev.get("index", 0))
+        if key in self._tool_previews:
+            return
+        self._tool_previews.add(key)
+        label = self._clip_terminal_line(
+            f"{scope} ⟳ {ev.get('name', 'tool')}…")
+        self._write(f"\r\033[K{color}{label}{_RESET}")
+
+    def _tool_complete(self, scope, ev, color):
+        self._tool_previews = {k for k in self._tool_previews if k[0] != scope}
+        args = json.dumps(ev.get("args") or {}, ensure_ascii=False,
+                          separators=(",", ":"))
+        label = self._clip_terminal_line(
+            f"{scope} ⟳ {ev.get('name', 'tool')}({args})")
+        self._write(f"\r\033[K{color}{label}{_RESET}\n")
+
     def _main_event(self, ev):
+        if self._in_alt:
+            # A TUI app ended (or never emitted its final phase): restore
+            # the normal screen before printing anything else.
+            self._leave_alt()
         t = ev["type"]
         if t == "phase":
             self._handle_phase(ev)
@@ -83,13 +134,14 @@ class Shell:
                 color = _SHELL_COLOR if layer == "shell" else _INTERP_COLOR
                 self._write(f"{_DIM}{color}{ev['text']}{_RESET}")
         elif t == "tool-delta":
-            self._write(f"\r\033[K{_TOOL_COLOR}\u27f3 {ev['name']}({ev['args']}){_RESET}")
+            if self.show_thinking == "on":
+                self._tool_preview("", ev, _TOOL_COLOR)
         elif t == "tool":
             if self.show_thinking == "on":
-                args = ", ".join(f"{k}={v}" for k, v in ev["args"].items())
-                self._write(f"\r\033[K{_TOOL_COLOR}\u27f3 {ev['name']}({args}){_RESET}\n")
+                self._tool_complete("", ev, _TOOL_COLOR)
             elif self.show_thinking == "off":
                 self._write("running tasks...\n")
+            self._tool_previews = {k for k in self._tool_previews if k[0]}
 
     def _handle_phase(self, ev):
         state = ev.get("state", "")
@@ -109,19 +161,118 @@ class Shell:
 
     def _sub_event(self, tag, ev):
         t = ev["type"]
+        # A native app owns both its framebuffer and its progress/status row.
+        # Even an accidental term() call from its semantic AI operation must
+        # not replace that screen.
+        if self._native_ui:
+            return
+        # Inside a TUI app's alt-screen, sub chatter (narration, tool lines)
+        # would corrupt the frame — the frame IS the UI. The app's report
+        # still reaches the user through the main session afterwards.
+        if self._in_alt and t in ("content", "tool", "tool-delta", "thinking"):
+            return
+        if t == "term":
+            self._render_term(ev.get("frame"))
+            return
         # Show vibe install status
         if "vibe:" in str(tag) and t == "content":
             pkg = str(tag).replace("vibe:", "").replace("app:", "").strip()
             if "vibecoded" in str(ev.get("text", "")).lower():
                 self._write(f"\033[32m✓ {pkg} installed\033[0m\n")
+                self._sub_at_line_start[tag] = True
+                return
         if t == "content":
-            self._write(f"{_DIM}[{tag}] {ev['text']}{_RESET}")
+            text = ev.get("text", "")
+            at_start = self._sub_at_line_start.get(tag, True)
+            if at_start:
+                self._write(
+                    f"{_DIM}[{self._event_tag(tag)}] {text}{_RESET}")
+            else:
+                self._write(f"{_DIM}{text}{_RESET}")
+            self._sub_at_line_start[tag] = text.endswith("\n")
         elif t == "tool-delta":
-            self._write(f"\r\033[K\033[35m[{tag}] \u27f3 {ev['name']}({ev['args']}){_RESET}")
-        elif t == "tool":
+            label = f"[{self._event_tag(tag)}]"
             if self.show_thinking == "on":
-                args = ", ".join(f"{k}={v}" for k, v in ev["args"].items())
-                self._write(f"\r\033[K\033[35m[{tag}] \u27f3 {ev['name']}({args}){_RESET}\n")
+                self._tool_preview(label, ev, "\033[35m")
+                self._sub_at_line_start[tag] = False
+        elif t == "tool":
+            at_start = self._sub_at_line_start.get(tag, True)
+            if not at_start:
+                self._clear_line()
+            if self.show_thinking == "on":
+                label = f"[{self._event_tag(tag)}]"
+                self._tool_complete(label, ev, "\033[35m")
+            elif self.show_thinking == "off":
+                label = self._clip_terminal_line(
+                    f"[{self._event_tag(tag)}] ⟳ {ev['name']}")
+                self._write(f"\r\033[K\033[35m{label}{_RESET}\n")
+            label = f"[{self._event_tag(tag)}]"
+            self._tool_previews = {
+                k for k in self._tool_previews if k[0] != label}
+            self._sub_at_line_start[tag] = True
+        elif t == "phase":
+            state = ev.get("state", "")
+            if state in ("answering", "completed", "failed") and self._in_alt:
+                self._leave_alt()
+            at_start = self._sub_at_line_start.get(tag, True)
+            if not at_start:
+                self._write("\n")
+                self._sub_at_line_start[tag] = True
+
+    # ---- TUI rendering (ComputerCraft-style term frames) ----------------------
+
+    def _leave_alt(self):
+        if not self._in_alt:
+            return
+        self._in_alt = False
+        self._write("\033[?25h\033[?1049l\033[0m")
+
+    @staticmethod
+    def _ansi256(cc_index):
+        # CC palette -> xterm-256 (kept in sync with daemon/term.py)
+        table = [15, 214, 201, 153, 226, 46, 218, 244,
+                 245, 51, 129, 27, 130, 28, 160, 16]
+        return table[cc_index] if 0 <= cc_index < 16 else 7
+
+    def _render_term(self, frame):
+        if not frame:
+            return
+        stop = self._turn_stop
+        if stop:
+            stop.set()                       # park the "thinking" spinner
+        if not self._in_alt:
+            self._in_alt = True
+            self._write("\033[?1049h\033[2J\033[H\033[?25h")
+        size = shutil.get_terminal_size(fallback=(80, 24))
+        width, height = max(20, size.columns), max(4, size.lines)
+        buf = ["\033[?25l"]
+        lines = frame.get("lines", [])
+        # Paint every physical terminal cell. Erasing after an ANSI reset
+        # exposes the terminal's default/transparent background and caused
+        # the patchy frames seen in TUI apps.
+        for i in range(height):
+            ln = lines[i] if i < len(lines) else {}
+            text = str(ln.get("t", ""))[:width].ljust(width)
+            fgs = str(ln.get("fg", ""))[:width].ljust(width, "0")
+            bgs = str(ln.get("bg", ""))[:width].ljust(width, "f")
+            buf.append(f"\033[{i + 1};1H")
+            cur = None
+            for j, ch in enumerate(text):
+                fc = fgs[j] if j < len(fgs) else "0"
+                bc = bgs[j] if j < len(bgs) else "f"
+                if (fc, bc) != cur:
+                    cur = (fc, bc)
+                    fi = int(fc, 16) if fc in "0123456789abcdef" else 0
+                    bi = int(bc, 16) if bc in "0123456789abcdef" else 15
+                    buf.append(f"\033[38;5;{self._ansi256(fi)}m"
+                               f"\033[48;5;{self._ansi256(bi)}m")
+                buf.append(ch)
+            buf.append("\033[0m")
+        x, y = frame.get("cursor", [1, 1])
+        x = max(1, min(width, int(x)))
+        y = max(1, min(height, int(y)))
+        buf.append(f"\033[{y};{x}H\033[?25h")
+        self._write("".join(buf))
 
     # ---- interactive handlers ------------------------------------------------
 
@@ -145,12 +296,130 @@ class Shell:
     def draw_handler(self, spec, clear):
         print(asui.render_spec(spec))
 
+    def native_notepad(self, args):
+        return native_notepad.run(self, args)
+
+    def term_pull(self, filt=None, timeout=30):
+        """Read one keypress from the user's terminal for a TUI app.
+        Returns {"event":"char","char":...} / {"event":"key","key":...} or
+        {"event":"timeout"} after `timeout` seconds."""
+        if termios is None or not (sys.stdin and sys.stdin.isatty()):
+            return {"event": "none"}
+        fd = sys.stdin.fileno()
+        try:
+            old = termios.tcgetattr(fd)
+        except termios.error:
+            return {"event": "none"}
+        try:
+            raw = termios.tcgetattr(fd)
+            raw[3] &= ~(termios.ECHO | termios.ICANON)
+            raw[6][termios.VMIN] = 1
+            raw[6][termios.VTIME] = 0
+            termios.tcsetattr(fd, termios.TCSANOW, raw)
+            deadline = time.time() + float(timeout or 30)
+            want = (filt or "any").lower()
+            while True:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    return {"event": "timeout"}
+                try:
+                    ready, _, _ = select.select([fd], [], [], remaining)
+                except InterruptedError:
+                    continue
+                if not ready:
+                    return {"event": "timeout"}
+                ev = self._decode_key(fd)
+                if ev is None:
+                    continue
+                if want in ("any", "", "all"):
+                    return ev
+                if want == "char" and ev.get("event") == "char":
+                    return ev
+                if want == "key" and ev.get("event") == "key":
+                    return ev
+                # filtered out (e.g. wanted a char, got tab) — keep waiting
+        finally:
+            try:
+                termios.tcsetattr(fd, termios.TCSANOW, old)
+            except termios.error:
+                pass
+
+    @staticmethod
+    def _decode_key(fd):
+        """Decode one keypress (already readable on fd) into an event dict.
+        Returns None if the bytes are an incomplete sequence to skip."""
+        try:
+            b = os.read(fd, 1)
+        except OSError:
+            return {"event": "none"}
+        if not b:
+            return {"event": "none"}
+        if b == b"\x1b":
+            ready, _, _ = select.select([fd], [], [], 0.05)
+            if not ready:
+                return {"event": "key", "key": "escape"}
+            b2 = os.read(fd, 1)
+            if b2 == b"[":
+                ready, _, _ = select.select([fd], [], [], 0.05)
+                if not ready:
+                    return {"event": "key", "key": "escape"}
+                b3 = os.read(fd, 1)
+                keys = {b"A": "up", b"B": "down", b"C": "right", b"D": "left",
+                        b"H": "home", b"F": "end", b"Z": "backtab"}
+                if b3 in keys:
+                    return {"event": "key", "key": keys[b3]}
+                # swallow other CSI sequences (e.g. modifiers, mouse)
+                while b3 and b3[-1:] not in b"mM~":
+                    ready, _, _ = select.select([fd], [], [], 0.02)
+                    if not ready:
+                        break
+                    b3 += os.read(fd, 1)
+                csi_keys = {b"3~": "delete", b"5~": "pageup",
+                            b"6~": "pagedown", b"1~": "home",
+                            b"4~": "end"}
+                if b3 in csi_keys:
+                    return {"event": "key", "key": csi_keys[b3]}
+                return None
+            return {"event": "key", "key": "escape"}
+        if b in (b"\r", b"\n"):
+            return {"event": "key", "key": "enter"}
+        if b == b"\t":
+            return {"event": "key", "key": "tab"}
+        if b in (b"\x7f", b"\x08"):
+            return {"event": "key", "key": "backspace"}
+        controls = {b"\x0f": "ctrl+o", b"\x11": "ctrl+q",
+                    b"\x13": "ctrl+s"}
+        if b in controls:
+            return {"event": "key", "key": controls[b]}
+        if b == b"\x03":
+            return {"event": "key", "key": "ctrl+c"}
+        if b[0] < 0x20:
+            return {"event": "key", "key": "ctrl"}
+        # utf-8: read the continuation bytes based on the leading byte
+        n = 4 if b[0] >= 0xF0 else 3 if b[0] >= 0xE0 else \
+            2 if b[0] >= 0xC0 else 1
+        buf = b
+        while len(buf) < n:
+            ready, _, _ = select.select([fd], [], [], 0.05)
+            if not ready:
+                break
+            buf += os.read(fd, 1)
+        try:
+            ch = buf.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        if len(ch) != 1:
+            return None
+        return {"event": "char", "char": ch}
+
     # ---- lifecycle -------------------------------------------------------------
 
     def start(self):
         self.daemon.start()
         self.daemon.executor.handlers["ask"] = self.ask_handler
         self.daemon.executor.handlers["draw"] = self.draw_handler
+        self.daemon.executor.handlers["term_pull"] = self.term_pull
+        self.daemon.executor.handlers["native_notepad"] = self.native_notepad
 
         print("\033[1;36m" + r"""     _    ____      
      / \  / ___|    
@@ -287,10 +556,9 @@ class Shell:
             if line.startswith("run ") or line.startswith("run\t"):
                 self._run_as_file(line[4:].strip())
                 continue
-            # bare word matching an installed app/package -> spawn directly
-            if self._try_app_spawn(line):
-                continue
-
+            # Everything else goes through kernel-2. Unix-looking words such
+            # as `ls`, installed app names, and natural-language requests are
+            # user intent for the AI—not commands for Python to dispatch.
             streamed = [False]
             stop = threading.Event()
             self._content_started = False
@@ -298,6 +566,8 @@ class Shell:
             def spinner():
                 dots = 0
                 while not stop.wait(0.4):
+                    if self._in_alt:
+                        continue          # a TUI app owns the screen right now
                     dots += 1
                     if stop.is_set():
                         break
@@ -310,6 +580,7 @@ class Shell:
                     streamed[0] = True
                 self._main_event(ev)
 
+            self._turn_stop = stop
             threading.Thread(target=spinner, daemon=True).start()
             try:
                 out = self.session.user_turn(line, on_event=on_event)
@@ -318,6 +589,9 @@ class Shell:
                 out = ""
             finally:
                 stop.set()
+                self._turn_stop = None
+            # safety: never leave a TUI app's alt screen up after its turn
+            self._leave_alt()
 
             if streamed[0]:
                 if out and not out.endswith("\n"):
@@ -650,7 +924,11 @@ class Shell:
         if not arg:
             print("usage: run <file.as>   e.g. run Documents/hello.as")
             return
-        parts = arg.split()
+        try:
+            parts = shlex.split(arg)
+        except ValueError as exc:
+            print(f"bad arguments: {exc}")
+            return
         path = parts[0]
         args = parts[1:]
         jail = self.daemon.jail
@@ -698,30 +976,6 @@ class Shell:
             print(report[:2000])
         else:
             print(f"ran {os.path.basename(real)} (no report)")
-
-    def _try_app_spawn(self, line):
-        """If the user's line starts with an installed app/package name
-        (optionally followed by args, e.g. "cowsay Hello, World!" or "man
-        vibe"), spawn it directly (deterministic, no model guesswork).
-        Returns True if handled."""
-        line = line.strip()
-        if not line:
-            return False
-        parts = line.split(None, 1)
-        word = parts[0]
-        try:
-            path = self.daemon._resolve_app(word)
-        except Exception:
-            return False
-        args = []
-        if len(parts) == 2:
-            rest = parts[1]
-            # "man vibe" -> args ["vibe"]; "cowsay Hello, World!" -> ["Hello,", "World!"]
-            args = rest.split()
-        self._write(f"\033[32mspawn {word}...\033[0m\n")
-        result = self.daemon._handle_spawn(word, args)
-        print(result)
-        return True
 
     def _pkgs(self):
         result = self.daemon._handle_vibe(None, "list", [])

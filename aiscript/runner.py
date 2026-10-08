@@ -6,6 +6,26 @@ _IMPORT_RE = re.compile(
     r"import\s+\"([^\"]+)\"\s+as\s+(\w+))\s*$"
 )
 
+# Aiscript has no grammar, so section labels are conventions rather than
+# tokens. Keep the canonical spelling for documentation, but recognize the
+# natural variants users and small models actually write.
+_PROGRAM_LABELS = {
+    "program", "program start", "program body", "program logic",
+    "program code", "program implementation",
+}
+
+
+def find_program_section(src):
+    """Return (preamble, body) for a recognizable program heading, or None."""
+    offset = 0
+    for line in src.splitlines(keepends=True):
+        label = line.strip().strip("-").strip().lower().replace("_", " ")
+        label = re.sub(r"\s+", " ", label)
+        if label in _PROGRAM_LABELS:
+            return src[:offset], src[offset + len(line):]
+        offset += len(line)
+    return None
+
 
 def scan_imports(src):
     """Return [(module_path, alias)] from import lines in aiscript source."""
@@ -34,6 +54,7 @@ def resolve_module(session, base_path, module_path):
 
 def run_file(session, path, args=None, on_event=None):
     """Interpret an aiscript program by streaming it through the session."""
+    session._program_path = os.path.realpath(path)
     with open(path) as f:
         src = f.read()
 
@@ -54,12 +75,16 @@ def run_file(session, path, args=None, on_event=None):
     except ValueError:
         rel_path = path
     program = (
+        "[APP RUNTIME: source and imports are already loaded. Execute the "
+        "program immediately. Do not inspect the filesystem for this app, "
+        "do not rewrite it, and do not print its source.]\n"
         f"--- aiscript app: {rel_path} ---\n"
         f"<arguments: {args_repr or 'none'}>\n"
         f"{src}\n"
         f"--- end of app ---\n"
-        f"If the app has a '--- program ---' section, everything below that "
-        f"line is the program's logic/assets — use it. "
+        f"Aiscript has no strict grammar. Treat the entire source as executable "
+        f"intent. Section headings such as '--- program ---' or "
+        f"'--- program start' are organizational hints, not required syntax. "
         f"Carry out that wish now, then report the result briefly."
     )
     return session.continue_turn(program, on_event=on_event)

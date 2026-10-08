@@ -1,4 +1,5 @@
 import ast
+import datetime
 import math
 import os
 import resource
@@ -15,7 +16,9 @@ _SHELL_TOOL_SCHEMAS = [
         "function": {
             "name": "list",
             "description": "List files/dirs in a path. sort=size|name|mtime|none. "
-                           "top=N limits entries. filter is a glob. recursive walks subdirs.",
+                           "top=N limits entries. filter is a filename glob; "
+                           "recursive walks subdirs. Use recursive+filter to locate "
+                           "a file by name.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -93,7 +96,8 @@ _SHELL_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "search",
-            "description": "Search files for text matching a pattern.",
+            "description": "Search INSIDE file contents for matching text. "
+                           "To find a filename, use list with filter+recursive.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -121,7 +125,7 @@ _SHELL_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "info",
-            "description": "System info: memory, disk, cpu, uptime.",
+            "description": "Current local date/time and system info: memory, disk, cpu, uptime.",
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -159,7 +163,7 @@ _SHELL_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "spawn",
-            "description": "Run an aiscript app in its own sub-session.",
+            "description": "Run an INSTALLED aiscript app (from /apps or /packages), not arbitrary .as files in Documents. For arbitrary .as files, read() then act or use interpret().",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -305,12 +309,54 @@ _SHELL_TOOL_SCHEMAS = [
     },
 ]
 
+# ComputerCraft-style virtual terminal (see daemon/term.py). One tool, many
+# actions — the interpreter drives a TUI app through it: write/blit frames,
+# move the cursor, colors, and pull() for keypresses.
+_TERM_ACTIONS = [
+    "write", "blit", "render", "clear", "clear_line", "scroll",
+    "set_cursor", "get_cursor", "set_fg", "set_bg", "get_fg", "get_bg",
+    "get_size", "current", "save", "restore", "pull",
+]
+TERM_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "term",
+        "description": (
+            "Virtual terminal for TUI apps (ComputerCraft term API). "
+            "Screen is w x h, cursor 1-based. write(text) prints at the "
+            "cursor; render(lines) replaces the whole screen in ONE call; "
+            "clear()/clear_line(); set_cursor(x,y); colors are "
+            "0-15 (0 white, 15 black). pull(filter, timeout) blocks for a "
+            "keypress: returns {\"event\":\"char\",\"char\":\"a\"} or "
+            "{\"event\":\"key\",\"key\":\"tab|enter|up|...\"}."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": list(_TERM_ACTIONS)},
+                "text": {"type": "string", "description": "write/blit text"},
+                "lines": {
+                    "type": "array", "items": {"type": "string"},
+                    "description": "render only: complete screen rows",
+                },
+                "fg": {}, "bg": {},
+                "x": {}, "y": {}, "n": {},
+                "filter": {"type": "string",
+                           "description": "pull only: char|key|any"},
+                "timeout": {"type": "integer",
+                            "description": "pull only: seconds (default 30)"},
+            },
+            "required": ["action"],
+        },
+    },
+}
+
 _INTERPRETER_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
             "name": "run",
-            "description": "Run a command in the busybox shell. You are chrooted in the sandbox.",
+            "description": "Run a command in the busybox shell (chrooted). For executing .as files, READ them first (or spawn if installed).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -459,7 +505,7 @@ TOOLS = [t for t in TOOLS if t["function"]["name"] != "copy"]
 TOOLS = [t for t in TOOLS if t["function"]["name"] != "mkdir"]
 
 SHELL_TOOLS = _SHELL_TOOL_SCHEMAS
-INTERPRETER_TOOLS = _INTERPRETER_TOOL_SCHEMAS
+INTERPRETER_TOOLS = _INTERPRETER_TOOL_SCHEMAS + [TERM_TOOL]
 
 # Tool names that only make sense interactively; sub-sessions get a stub.
 INTERACTIVE_TOOLS = {"ask", "draw", "shutdown"}
@@ -502,6 +548,9 @@ def _chroot_run(jail, command, cwd="."):
     """Run command chrooted inside jail using unshare -r (user namespace).
     `cwd` is a jail-relative path (e.g. 'home/demo/Documents'); inside the
     chroot that is an absolute path rooted at '/'. Empty cwd = jail root."""
+    guard = _aiscript_exec_guard(command)
+    if guard:
+        return f"[refused]\n{guard}"
     env = {
         "PATH": "/bin:/usr/bin:/sbin:/usr/sbin",
         "HOME": "/home",
@@ -536,6 +585,28 @@ def _chroot_run(jail, command, cwd="."):
 
 
 # ---------------------------------------------------------------- executor ---
+
+_AIS_EXT = (".as", ".ais", ".am")
+
+
+def _aiscript_exec_guard(command):
+    """Refuse `run` whose executable is an aiscript file.
+
+    A .as file is not a shell script: feeding it to sh fails (exit 126) and
+    the model then flails with chmod/retries. Caught here deterministically
+    so it gets a usable instruction instead."""
+    toks = command.split()
+    if not toks:
+        return None
+    base = toks[0].rsplit("/", 1)[-1]
+    if base.endswith(_AIS_EXT):
+        return (
+            "[aiscript] .as files cannot be executed by run — aiscript is "
+            "interpreted, not a shell script. READ the file, then carry out "
+            "its instructions yourself using your tools."
+        )
+    return None
+
 
 class ToolExecutor:
     """Runs parsed tool calls against a sandboxed jail filesystem."""
@@ -664,6 +735,9 @@ class ToolExecutor:
         cmd = command.strip()
         if not cmd:
             raise ToolRefusal("empty command")
+        guard = _aiscript_exec_guard(cmd)
+        if guard:
+            raise ToolRefusal(guard)
         first = cmd.split()[0].lower()
         if first in BANNED_LANG:
             raise ToolRefusal(
@@ -712,7 +786,29 @@ class ToolExecutor:
 
     def search(self, path, pattern, regex=False):
         root = self._jail_path(path or ".")
+        import fnmatch
         import re as _re
+        # Be forgiving when a small model picks content-search for a filename
+        # lookup. A dotted/basename-shaped pattern is checked against names
+        # first, preventing an expensive scan of session JSON files and
+        # returning the location the user actually asked for.
+        pattern_text = str(pattern or "")
+        looks_filename = bool(os.path.splitext(os.path.basename(pattern_text))[1])
+        if looks_filename:
+            name_hits = []
+            needle = pattern_text.lower()
+            for r, _dirs, files in os.walk(root):
+                for f in files:
+                    low = f.lower()
+                    if low == needle or fnmatch.fnmatch(low, needle):
+                        rel = os.path.relpath(os.path.join(r, f), self.jail)
+                        name_hits.append("/" + rel.replace(os.sep, "/"))
+                        if len(name_hits) >= 50:
+                            break
+                if len(name_hits) >= 50:
+                    break
+            if name_hits:
+                return "filename matches:\n" + "\n".join(name_hits)
         results = []
         for r, _dirs, files in os.walk(root):
             for f in files:
@@ -741,8 +837,15 @@ class ToolExecutor:
         return str(_safe_eval(expr))
 
     def info(self):
-        lines = []
-        for cmd in (["free", "-h"], ["df", "-h", "/"], ["uname", "-a"]):
+        now = datetime.datetime.now().astimezone()
+        lines = [
+            f"current local datetime: {now.isoformat(timespec='seconds')}",
+            f"current local date: {now.strftime('%A, %Y-%m-%d')}",
+        ]
+        # `uname -a` includes the kernel's build date. Small models regularly
+        # mistake that for today's date, so use the undated fields only.
+        for cmd in (["free", "-h"], ["df", "-h", "/"],
+                    ["uname", "-srm"]):
             try:
                 r = subprocess.run(cmd, capture_output=True, timeout=5)
                 lines.append(r.stdout.decode(errors="replace").strip())

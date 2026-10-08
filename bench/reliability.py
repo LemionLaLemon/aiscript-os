@@ -11,6 +11,8 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+os.environ.setdefault("AS_NO_WARMUP", "1")   # keep bench timings pure
+
 import tomllib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -125,19 +127,28 @@ def main():
     from daemon.session import Session
 
     class FakeEngine:
-        def __init__(self):
+        def __init__(self, text_calls=False, varying=False):
             self.n = 0
+            self.cfg = {}
+            self.text_calls = text_calls
+            self.varying = varying
 
         def chat(self, messages, **kw):
             self.n += 1
+            if kw.get("tool_choice") == "none":
+                return {"role": "assistant",
+                        "content": "I used the existing result: 4"}
+            path = f"file-{self.n}.txt" if self.varying else "same.txt"
+            if self.text_calls:
+                return {"role": "assistant",
+                        "content": f"read(path=\"{path}\")"}
             return {
                 "role": "assistant",
                 "content": "",
                 "tool_calls": [{
                     "id": f"c{self.n}",
-                    "function": {"name": "calc",
-                                 "arguments": json.dumps(
-                                     {"expr": f"{self.n}+{self.n}"})},
+                    "function": {"name": "read",
+                                 "arguments": json.dumps({"path": path})},
                 }],
             }
 
@@ -149,23 +160,103 @@ def main():
             self.executed.append((tool, args))
             return "4"
 
-    fake_engine = FakeEngine()
+    guard_passes = []
+    for label, text_calls in (("structured", False), ("text fallback", True)):
+        fake_engine = FakeEngine(text_calls=text_calls)
+        fake_exec = FakeExec()
+        sess = Session(fake_engine, fake_exec, system_prompt="sys")
+        sess.max_loops = 5
+        out = sess.user_turn("hi", on_event=lambda e: None)
+        steered = sum(
+            1 for m in sess.messages
+            if m.get("role") == "tool"
+            and "[repeated call #" in m.get("content", "")
+        )
+        ok = (steered == 1 and len(fake_exec.executed) == 1
+              and fake_engine.n == 3
+              and out == "I used the existing result: 4")
+        guard_passes.append(ok)
+        print(f"[{'PASS' if ok else 'FAIL'}] {label}: "
+              f"executed={len(fake_exec.executed)} steered={steered} "
+              f"engine_calls={fake_engine.n} out={out!r}")
+    fake_engine = FakeEngine(varying=True)
     fake_exec = FakeExec()
     sess = Session(fake_engine, fake_exec, system_prompt="sys")
     sess.max_loops = 5
     out = sess.user_turn("hi", on_event=lambda e: None)
-    steered = sum(
-        1 for m in sess.messages
-        if m.get("role") == "tool" and "[repeated call]" in m.get("content", "")
-    )
-    if steered == 3 and len(fake_exec.executed) == 2:
-        results["guard"] = "pass"
-        print(f"[PASS] 3 identical-tool calls steered after 2 real executions "
-              f"({len(fake_exec.executed)} executed, {steered} steers)")
-    else:
-        results["guard"] = "fail"
-        print(f"[FAIL] executed={len(fake_exec.executed)} steered={steered} "
-              f"engine_calls={fake_engine.n} out={out!r}")
+    varying_ok = (len(fake_exec.executed) == 5
+                  and out == "(agent loop ran too long; giving up)")
+    guard_passes.append(varying_ok)
+    print(f"[{'PASS' if varying_ok else 'FAIL'}] legitimate repeated tool: "
+          f"executed={len(fake_exec.executed)} out={out!r}")
+
+    from daemon.model import ModelEngine
+    payload_engine = ModelEngine({
+        "host": "127.0.0.1", "port": 1, "model_name": "test",
+    })
+    payload = payload_engine._payload(
+        [], [], 0.1, 0, 32, "auto", reasoning_budget=7)
+    budget_ok = (payload.get("reasoning_budget_tokens") == 7
+                 and "reasoning_budget" not in payload
+                 and payload.get("parallel_tool_calls") is None)
+    guard_passes.append(budget_ok)
+    print(f"[{'PASS' if budget_ok else 'FAIL'}] reasoning budget payload: "
+          f"{payload.get('reasoning_budget_tokens')!r}")
+    tool_payload = payload_engine._payload(
+        [], [{"type": "function", "function": {"name": "list"}}],
+        0.1, 0, 32, "required", reasoning_budget=7)
+    serial_tools_ok = tool_payload.get("parallel_tool_calls") is False
+    guard_passes.append(serial_tools_ok)
+    print(f"[{'PASS' if serial_tools_ok else 'FAIL'}] serial tool calls: "
+          f"{tool_payload.get('parallel_tool_calls')!r}")
+
+    # Raw user input must reach the shell AI. In particular, BusyBox `ls`
+    # must never be mistaken for an aiscript app and spawned by the REPL.
+    from daemon.server import Daemon
+    resolver = Daemon(CFG)
+    resolver.current_user = USER
+    man_app = resolver._resolve_app("man")
+    routing_ok = (resolver._resolve_app("ls") is None
+                  and resolver._resolve_app("/bin/ls") is None
+                  and man_app is not None and man_app.endswith(".as"))
+    guard_passes.append(routing_ok)
+    print(f"[{'PASS' if routing_ok else 'FAIL'}] AI-first input routing: "
+          f"ls={resolver._resolve_app('ls')!r}, man={man_app!r}")
+
+    class FastListEngine:
+        cfg = {}
+        def __init__(self):
+            self.calls = []
+        def chat(self, messages, **kw):
+            self.calls.append((messages, kw.get("tools"),
+                               kw.get("tool_choice")))
+            if kw.get("tool_choice") == "none":
+                return {"role": "assistant",
+                        "content": "I found these delightful little files: 4"}
+            return {
+                "role": "assistant", "content": None,
+                "tool_calls": [{
+                    "id": "list1",
+                    "function": {"name": "list",
+                                 "arguments": json.dumps({"path": "."})},
+                }],
+            }
+    fast_engine = FastListEngine()
+    fast_exec = FakeExec()
+    fast_sess = Session(fast_engine, fast_exec, system_prompt="large policy")
+    fast_out = fast_sess.user_turn("ls", on_event=lambda e: None)
+    fast_ok = (len(fast_engine.calls) == 2
+               and len(fast_engine.calls[0][1]) == 1
+               and fast_engine.calls[0][1][0]["function"]["name"] == "list"
+               and fast_exec.executed == [("list", {"path": "home/user"})]
+               and fast_engine.calls[1][1] == []
+               and fast_engine.calls[1][2] == "none"
+               and fast_out == "I found these delightful little files: 4")
+    guard_passes.append(fast_ok)
+    print(f"[{'PASS' if fast_ok else 'FAIL'}] AI-composed list: "
+          f"model_calls={len(fast_engine.calls)}, "
+          f"tools={fast_exec.executed}, out={fast_out!r}")
+    results["guard"] = "pass" if all(guard_passes) else "fail"
 
     if csv_path:
         os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)

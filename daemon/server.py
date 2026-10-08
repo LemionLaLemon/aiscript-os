@@ -349,6 +349,18 @@ class Daemon:
     def _handle_spawn(self, app, args):
         from aiscript import runner
         path = self._resolve_app(app)
+        if not path:
+            raise ToolRefusal(f"app not found: {app}")
+        # The AI decides to launch essential interactive apps, but a token
+        # stream is not a keyboard loop or framebuffer. Native notepad owns
+        # those mechanics and calls the interpreter only for semantic edits.
+        native = self.executor.handlers.get("native_notepad")
+        if native and os.path.basename(path) in ("notepad.as", "notepad.ais"):
+            self.log(f"spawn native notepad {path} args={args}")
+            try:
+                return native(args or [])
+            except Exception as e:
+                return f"[notepad crashed] {e}"
         name = f"app:{os.path.basename(path)}"
         sub = self.new_session(
             name,
@@ -381,18 +393,36 @@ class Daemon:
         return vibe.vibe(self, target, action, flags)
 
     def _resolve_app(self, app):
-        exts = ("", ".as", ".ais", ".am", ".aconf")
+        """Resolve only runnable aiscript sources inside the jail.
+
+        BusyBox commands and arbitrary jail files are deliberately excluded:
+        spawn is an aiscript runtime, not a shortcut around the AI shell.
+        """
+        app = str(app or "").strip()
+        if not app:
+            return None
+        jail = os.path.realpath(self.jail)
+
+        def runnable(path):
+            real = os.path.realpath(path)
+            if real != jail and not real.startswith(jail + os.sep):
+                return None
+            if not real.endswith((".as", ".ais")):
+                return None
+            return real if os.path.isfile(real) else None
+
+        exts = ("", ".as", ".ais")
         bases = [
             os.path.join(self.jail, "apps", app),
             os.path.join(self.jail, "home", self.current_user or "",
                          "apps", app),
-            os.path.join(self.jail, app),
             os.path.join(self.jail, "packages", app),
         ]
         for b in bases:
             for e in exts:
-                if os.path.isfile(b + e):
-                    return b + e
+                found = runnable(b + e)
+                if found:
+                    return found
         # vibecoded packages are directories with an entry in the manifest.
         pkg = os.path.join(self.jail, "packages", app)
         if os.path.isdir(pkg):
@@ -406,6 +436,24 @@ class Daemon:
                             if val:
                                 entry = os.path.join(pkg, val)
                                 break
-            if os.path.isfile(entry):
-                return entry
-        raise ToolRefusal(f"app not found: {app}")
+            found = runnable(entry)
+            if found:
+                return found
+
+        # Explicit .as/.ais paths are allowed. Session._resolve_spawn_app()
+        # normally turns cwd-relative paths into absolute host paths first.
+        if app.endswith((".as", ".ais")):
+            direct = []
+            if os.path.isabs(app) and os.path.realpath(app).startswith(jail + os.sep):
+                direct.append(app)
+            else:
+                direct.extend([
+                    os.path.join(jail, app.lstrip("/")),
+                    os.path.join(jail, "home", self.current_user or "",
+                                 app.lstrip("/")),
+                ])
+            for candidate in direct:
+                found = runnable(candidate)
+                if found:
+                    return found
+        return None

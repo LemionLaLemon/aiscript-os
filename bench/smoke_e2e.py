@@ -5,6 +5,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+os.environ.setdefault("AS_NO_WARMUP", "1")   # keep bench timings pure
+
 import tomllib
 
 from daemon.server import Daemon

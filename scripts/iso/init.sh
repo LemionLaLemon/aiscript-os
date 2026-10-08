@@ -26,11 +26,18 @@ mount -t tmpfs tmpfs /run 2>/dev/null || true
 
 log "mounting data partition"
 mkdir -p /data
-mount -t ext4 /dev/sda2 /data 2>/dev/null || \
-mount -t ext4 LABEL=ascdata /data 2>/dev/null || {
+# The data partition sits on different devices per medium: flashed USB =
+# sda2 (ESP+data layout), single-partition image (qemu/vbox) = sda1/vda1,
+# virtio = vda1/vda2. Try each, then the filesystem label, then fall back
+# to a throwaway tmpfs. (/data itself must pre-exist in the image — the
+# root squashfs is read-only, so mkdir at boot silently fails.)
+for dev in /dev/sda2 /dev/sda1 /dev/vda2 /dev/vda1 LABEL=ascdata; do
+    mount -t ext4 "$dev" /data 2>/dev/null && break
+done
+if ! grep -q ' /data ' /proc/mounts 2>/dev/null; then
     log "WARNING: no data partition found; running throwaway (tmpfs)."
     mount -t tmpfs tmpfs /data
-}
+fi
 echo "--- ascOS boot log ---" >> /data/boot.log 2>/dev/null || true
 
 # Bring up the loopback interface. The engine listens on 127.0.0.1 and the

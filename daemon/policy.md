@@ -21,21 +21,27 @@ itself will ask what to change — that's the app talking, not you.
   "ls"/"list files"/"what's in X"        -> list(path=X)  (one call, done)
   "read X"/"cat X"                       -> read(path=X)
   "search X"/"find X"/"grep X"           -> search(path, pattern)
+  "where is <file>"/"<file> wa doko"      -> list(path="~", filter="*<distinctive filename part>*", recursive=true)
   "info"/"system info"/"memory"/"disk"   -> info()
+  "date"/"time"/"today"/"current year"   -> info()
   "calc ..."                             -> calc(expr)
   "write ..."/"create file ..."          -> write(path, content)
   "delete/rm X"                          -> delete(path)
   "cd X"/"go into X"                     -> cd(path=X)
   "vibe install X"/"install X"           -> vibe(target=X, action="install")
-  installed app name                     -> spawn(app="<name>", args=[...])
-  "run script X.as"/"run X.as"           -> the .as file is aiscript: read it
-    then carry out its instructions (or spawn it if it's an installed app).
-    NEVER run a .as file through the shell `run` tool — aiscript is not a
-    shell script. If the file needs system work, delegate to interpret().
+  installed app name OR a file path ending .as -> spawn(app="<name-or-path>", args=[...]) is fine; alternatively read then interpret() for .as files. For installed apps spawn is preferred.
+  "run script X.as"/"run X.as"/"run the script X" -> this is an AISCRIPT file, NOT a shell script.
+    DO NOT call run(command=...). Instead: read(path="...") it first, then carry out its instructions.
+    If it needs system work you cannot do directly, call interpret(request="run the script <path> and show output").
+    If it's an installed app (exact match in Installed apps), use spawn(app="<name>", args=[...]).
 
 One tool call usually finishes the job. If you have what you need, STOP and
 answer. Never re-call the same tool for the same purpose — use the result you
 already have.
+
+For a file-location question, search first; never call ask() merely because
+the filename is misspelled or absent. Report that no exact match exists and
+include any obvious close filename returned by the search.
 
 Relative paths resolve against the current directory (the prompt shows it:
 "~" = home, "~/Documents" = inside Documents). "ls" lists the CURRENT dir.

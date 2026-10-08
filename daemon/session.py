@@ -41,6 +41,10 @@ class Session:
         # working directory (jail-relative, e.g. "home/demo/Documents";
         # "" = jail root — used by vibe sub-sessions that write to /packages)
         self.cwd = self._default_cwd() if cwd is None else cwd
+        # virtual terminal state for TUI apps (lazily created by term tool)
+        self._term = None
+        # event hook of the running _loop (used to stream term frames)
+        self._loop_hook = None
 
     # ---- public ------------------------------------------------------------
 
@@ -163,12 +167,46 @@ class Session:
             return "required"
         if cls._QUESTION_RE.match(t) or t.endswith("?"):
             return "auto"
-        return "required"
+        # Unknown language is not evidence of an action. `required` forced
+        # conversational Japanese/French utterances to invent a tool call
+        # based on the previous turn. Auto still permits tools when the model
+        # understands a non-English request as an action.
+        return "auto"
 
     def _effective_tool_choice(self, text):
         if self.tool_choice:
             return self.tool_choice
         return self._classify_turn(text)
+
+    _FAST_LIST_RE = re.compile(
+        r'^(?:ls|list|list files|list the files|list current directory|'
+        r'list the current directory|what(?:\'s| is) here)[.!]?$',
+        re.IGNORECASE)
+
+    def _fast_turn_profile(self, text):
+        """Return a tiny prompt/toolset for context-free common actions.
+
+        The model still interprets and performs the request; Python does not
+        execute `ls`. This only avoids asking a 2.6B CPU model to prefill the
+        full personality plus 21 tool schemas for an unambiguous one-tool
+        turn. Context-dependent wording never takes this path.
+        """
+        if self.layer != "shell" or self.tool_choice is not None:
+            return None
+        if not self._FAST_LIST_RE.match((text or "").strip()):
+            return None
+        list_tools = [t for t in self.tools
+                      if t.get("function", {}).get("name") == "list"]
+        if not list_tools:
+            return None
+        prompt = (
+            "You are kernel-2, the AI shell of as-os. The user always talks "
+            "to you; interpret their intent and use the provided tool. "
+            f"Current directory: {self._display_cwd()}. For this request, "
+            "call list exactly once with path='.'. After its result, answer "
+            "briefly and accurately. Do not inspect subdirectories."
+        )
+        return prompt, list_tools
 
     # ---- working directory --------------------------------------------------
 
@@ -218,13 +256,12 @@ class Session:
     def _request_messages(self):
         """Cache-friendly wire form of the history.
 
-        Assistant tool-call messages are dropped (unless keep_tool_msgs is
-        set): llama.cpp re-tokenizes a stored tool-call message differently
-        on re-send, which breaks the prompt cache and forces a full prefill
-        on the very next request (measured ~13s on the 2B). The tool RESULT
-        is kept and tagged with the tool name so the model still knows what
-        ran. Sessions that need the model to see its own prior actions
-        (e.g. OOBE) pass keep_tool_msgs=True and eat the cache cost.
+        Complete assistant-call/tool-result pairs from the ACTIVE user turn
+        must be retained. Dropping the call but keeping only ``[search] no
+        matches`` deprived small models of what they had just attempted and
+        caused exact retry loops. Older turns may omit their tool mechanics
+        because their final assistant answer already records the outcome;
+        this keeps the long-term prompt cache reasonably small.
         """
         out = []
         # Preempt context overflow: if history is getting long, compact it
@@ -235,17 +272,39 @@ class Session:
         limit = 8192 - max_tokens - 512
         if self.est_tokens() > limit:
             self._compact_history(target=limit - 512)
-        for m in self.messages:
+        latest_user = max(
+            (i for i, m in enumerate(self.messages) if m["role"] == "user"),
+            default=0,
+        )
+        pending_old_results = []
+        for idx, m in enumerate(self.messages):
+            if m["role"] == "user" and pending_old_results:
+                # Compatibility for sessions saved by the old direct-result
+                # path: close the previous user turn with its tool outcome so
+                # this new user message is not interpreted as a continuation.
+                out.append({"role": "assistant", "content":
+                            "\n".join(pending_old_results)})
+                pending_old_results = []
             if m["role"] == "assistant" and m.get("tool_calls"):
-                if not self.keep_tool_msgs:
+                if not self.keep_tool_msgs and idx < latest_user:
                     continue
             if m["role"] == "tool":
+                if not self.keep_tool_msgs and idx < latest_user:
+                    name = m.get("_tool")
+                    content = m.get("content") or ""
+                    pending_old_results.append(
+                        f"[{name}] {content}" if name else content)
+                    continue
                 nm = dict(m)
                 name = m.get("_tool")
                 if name:
                     nm["content"] = f"[{name}] {nm['content']}"
+                nm.pop("_tool", None)
                 out.append(nm)
             else:
+                if m["role"] == "assistant" and not m.get("tool_calls"):
+                    # A real final answer supersedes any pending raw result.
+                    pending_old_results = []
                 out.append(m)
         return out
     def _compact_history(self, target=5200):
@@ -286,8 +345,11 @@ class Session:
     def _loop(self, on_event):
         started = time.time()
         recent_calls = []
+        self._rep_warns = 0
         on_event = on_event or (lambda e: None)
         all_events = []
+        executed_results = {}
+        answer_only = False
 
         # Decide tool_choice for this turn from the latest user message.
         last_user = ""
@@ -296,6 +358,20 @@ class Session:
                 last_user = m.get("content") or ""
                 break
         tool_choice = self._effective_tool_choice(last_user)
+        fast_profile = self._fast_turn_profile(last_user)
+        request_tools = fast_profile[1] if fast_profile else self.tools
+
+        def request_messages():
+            wire = self._request_messages()
+            if not fast_profile:
+                return wire
+            # A context-free fast action does not need old conversation turns.
+            # Keep only this turn and its tool results, replacing the large
+            # normal policy with the focused AI instruction above.
+            latest = max(i for i, m in enumerate(wire)
+                         if m.get("role") == "user")
+            return ([{"role": "system", "content": fast_profile[0]}]
+                    + wire[latest:])
         # An ACTION turn is forced (tool_choice="required") so the model acts
         # instead of narrating. But once a tool has actually run and produced
         # a result, forcing tool calls on later rounds makes the model re-call
@@ -321,31 +397,43 @@ class Session:
                 )
             events = []
             hook = lambda e: (events.append(e), all_events.append(e), on_event(e))
-            # Sessions with an EXPLICIT tool_choice ("required"/"auto" set at
-            # construction — OOBE, vibe, interpreter) are rigid scripts: they
-            # must keep forcing tools until done. Only per-turn-classified
-            # shell turns (tool_choice=None at construction) downgrade to
-            # "auto" after the first tool, so a one-tool action can stop and
-            # answer instead of re-calling tools forever.
+            self._loop_hook = hook
+            # Round 0 honors the classified/explicit choice so ACTION turns
+            # act instead of narrating. But once a tool has actually run,
+            # forcing tool calls on later rounds makes the model re-call the
+            # same tool instead of finishing (the "repeated tool call"
+            # spiral — observed live: the interpreter re-read hello.as until
+            # hard-capped). Downgrade to "auto" after the first executed
+            # tool for EVERY session kind so it can stop and report;
+            # multi-step programs keep calling tools on their own because
+            # auto still allows it.
+            choice = "none" if answer_only else (
+                "auto" if acted[0] else tool_choice)
             if self.tool_choice is None:
-                choice = "auto" if acted[0] else tool_choice
                 rbudget = budget_after_act if acted[0] else budget_round0
             else:
-                choice = tool_choice
                 rbudget = int(self.engine.cfg.get(
                     "reasoning_budget_subsession", 256))
             try:
                 msg = self.engine.chat(
-                    self._request_messages(), tools=self.tools, temp=self.temp,
-                    slot=self.slot, max_tokens=self.max_tokens, on_event=hook,
+                    request_messages(),
+                    tools=[] if answer_only else request_tools, temp=self.temp,
+                    slot=self.slot,
+                    max_tokens=min(self.max_tokens or 256, 256)
+                    if fast_profile else self.max_tokens,
+                    on_event=hook,
                     tool_choice=choice, reasoning_budget=rbudget,
                 )
             except ContextOverflow:
                 self._log("context overflow — compacting history and retrying")
                 self._compact_history()
                 msg = self.engine.chat(
-                    self._request_messages(), tools=self.tools, temp=self.temp,
-                    slot=self.slot, max_tokens=self.max_tokens, on_event=hook,
+                    request_messages(),
+                    tools=[] if answer_only else request_tools, temp=self.temp,
+                    slot=self.slot,
+                    max_tokens=min(self.max_tokens or 256, 256)
+                    if fast_profile else self.max_tokens,
+                    on_event=hook,
                     tool_choice=choice, reasoning_budget=rbudget,
                 )
             if not msg.get("tool_calls"):
@@ -356,11 +444,13 @@ class Session:
                 # also emit a hallucinated JSON 'agent command' blob; catch
                 # that too.
                 content = msg.get("content") or ""
-                text_call = self._extract_text_tool_call(content)
-                if text_call is None:
-                    text_call = self._extract_xml_tool_call(content)
-                if text_call is None:
-                    text_call = self._extract_json_command_call(content)
+                text_call = None
+                if not answer_only:
+                    text_call = self._extract_text_tool_call(content)
+                    if text_call is None:
+                        text_call = self._extract_xml_tool_call(content)
+                    if text_call is None:
+                        text_call = self._extract_json_command_call(content)
                 if text_call:
                     tool, args = text_call
                     msg = {"role": "assistant", "content": None,
@@ -372,11 +462,18 @@ class Session:
                            }]}
                     self.messages.append(msg)
                     on_event({"type": "phase", "state": "running"})
-                    recent_calls.append((tool, args))
                     acted[0] = True
-                    if len(recent_calls) > 4:
-                        recent_calls.pop(0)
-                    self._run_tool(tool, args, i, recent_calls, hook)
+                    repeat = self._guard_repeated_call(
+                        tool, args, recent_calls, f"textcall_{i}")
+                    if repeat == "stop":
+                        answer_only = True
+                        continue
+                    result = self._run_tool(
+                        tool, args, f"textcall_{i}", recent_calls, hook)
+                    executed_results[self._call_key(tool, args)] = result
+                    if self._self_contained_result(tool, args, result) \
+                            or fast_profile:
+                        answer_only = True
                     continue
                 self.messages.append(msg)
                 content = msg.get("content") or ""
@@ -413,43 +510,98 @@ class Session:
                 on_event({"type": "phase", "state": "answering",
                           "layer": self.layer})
                 return "(kernel-2 went quiet. Try asking differently, or say 'man' to read the manual.)"
+            # `tool_choice=none` should make this impossible. If a backend
+            # ignores it, never execute the call: fall back to the cached
+            # result rather than reopening a loop.
+            if answer_only:
+                return (list(executed_results.values())[-1]
+                        if executed_results else "(answer generation failed)")
             self.messages.append(msg)
             # Emit running phase before tool exec
             on_event({"type": "phase", "state": "running"})
+            repeat_detected = False
             for tc in msg["tool_calls"]:
                 fn = tc["function"]["name"]
                 try:
                     args = json.loads(tc["function"]["arguments"] or "{}")
                 except json.JSONDecodeError:
-                    args = {}
+                    raw = tc["function"]["arguments"] or ""
+                    args = self._parse_text_args(raw) or {}
+                    # attach diagnostic hint via a small marker? but we don't emit events here
+                    pass
                 tool, args = self._apply_chaos(fn, args)
-                recent_calls.append((tool, args))
-                if len(recent_calls) > 4:
-                    recent_calls.pop(0)
-                exact_repeat = recent_calls.count((tool, args)) > 1
-                stuck_on_tool = (len(recent_calls) >= 3
-                                 and all(t == tool for t, _ in recent_calls[-3:]))
-                if exact_repeat or stuck_on_tool:
-                    self.messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc.get("id", f"call_{i}"),
-                        "content": (
-                            "[repeated call] you are repeating "
-                            + ("exactly this call" if exact_repeat
-                               else f"{tool} over and over")
-                            + ". Use the results you already have and move on, "
-                            "or call something different. Do not repeat it."
-                        ),
-                        "_tool": tool,
-                    })
-                    continue
+                repeat = self._guard_repeated_call(
+                    tool, args, recent_calls, tc.get("id", f"call_{i}"))
+                if repeat == "stop":
+                    answer_only = True
+                    repeat_detected = True
+                    break
                 acted[0] = True
-                self._run_tool(tool, args, i, recent_calls, hook)
+                call_id = tc.get("id", f"call_{i}")
+                result = self._run_tool(
+                    tool, args, call_id, recent_calls, hook)
+                executed_results[self._call_key(tool, args)] = result
+                if self._self_contained_result(tool, args, result) \
+                        or fast_profile:
+                    answer_only = True
+            if repeat_detected:
+                continue
         return "(agent loop ran too long; giving up)"
 
     # ---- internals -----------------------------------------------------------
 
-    def _run_tool(self, tool, args, idx, recent_calls, hook=None):
+    @staticmethod
+    def _call_key(tool, args):
+        return tool, json.dumps(args or {}, sort_keys=True, default=str)
+
+    @staticmethod
+    def _self_contained_result(tool, args, result):
+        """Results ready for an answer-only model round (not direct output)."""
+        if tool in ("calc", "info", "pwd"):
+            return True
+        if tool == "search" and str(result).startswith("filename matches:\n"):
+            return True
+        if tool == "list" and args.get("recursive") and args.get("filter"):
+            return True
+        return False
+
+    def _guard_repeated_call(self, tool, args, recent_calls, call_id):
+        """Record a proposed call and reject tool-call spirals.
+
+        This is shared by native structured calls and the text/XML/JSON
+        recovery path. Without the latter, a model that repeatedly printed
+        ``list(path=\".\")`` could bypass the loop guard entirely.
+        """
+        recent_calls.append((tool, args))
+        if len(recent_calls) > 4:
+            recent_calls.pop(0)
+        exact_repeat = recent_calls.count((tool, args)) > 1
+        # Reusing one tool with different arguments is normal: a TUI may make
+        # dozens of term() calls to draw one frame, and an app generator may
+        # write several files. Only an identical tool+arguments pair proves
+        # that the model ignored an already-returned result.
+        if not exact_repeat:
+            self._rep_warns = 0
+            return "ok"
+
+        self._rep_warns += 1
+        self.messages.append({
+            "role": "tool",
+            "tool_call_id": call_id,
+            "content": (
+                f"[repeated call #{self._rep_warns}] you are repeating "
+                "exactly this call"
+                + ". Use the results you already have and move on, or call "
+                "something different. Do not repeat it."
+            ),
+            "_tool": tool,
+        })
+        # The first execution result is cached by the loop. Never spend
+        # another model round asking a 2B model not to do the same thing yet
+        # again; return that cached result immediately.
+        return "stop"
+
+    def _run_tool(self, tool, args, call_id, recent_calls, hook=None):
         """Execute a parsed tool call, emitting events and recording the
         tool result message. Returns the result string."""
         hook = hook or (lambda e: None)
@@ -458,7 +610,7 @@ class Session:
         hook({"type": "tool-result", "name": tool, "result": result})
         self.messages.append({
             "role": "tool",
-            "tool_call_id": f"call_{idx}",
+            "tool_call_id": call_id,
             "content": result,
             "_tool": tool,
         })
@@ -500,7 +652,7 @@ class Session:
     _TEXT_CALL_RE = re.compile(
         r'(?<![\w"])'
         r'(list|read|write|append|run|search|calc|info|ask|draw|spawn|vibe|'
-        r'interpret|delete|move|copy|mkdir|shutdown|create_user)\s*\(',
+        r'interpret|delete|move|copy|mkdir|shutdown|create_user|term)\s*\(',
         re.IGNORECASE)
 
     # `[run] mkdir path`, `[mkdir] path`, `[spawn] cowsay hello` bracket
@@ -508,7 +660,7 @@ class Session:
     _BRACKET_CALL_RE = re.compile(
         r'^\s*[-*_> ]*\[(list|read|write|append|run|search|calc|info|ask|'
         r'draw|spawn|vibe|interpret|delete|move|copy|mkdir|shutdown|'
-        r'create_user)\]\s*([^\n]*)',
+        r'create_user|term)\]\s*([^\n]*)',
         re.IGNORECASE | re.MULTILINE)
 
     def _extract_text_tool_call(self, content):
@@ -557,18 +709,17 @@ class Session:
     _XML_CALL_RE = re.compile(
         r'<function-call>\s*(.*?)\s*</function-call>',
         re.IGNORECASE | re.DOTALL)
-
+    _XML_CALL2_RE = re.compile(
+        r'<tool_call>\s*(.*?)\s*</tool_call>',
+        re.IGNORECASE | re.DOTALL)
     def _extract_xml_tool_call(self, content):
-        """Parse a `<function-call>toolname(args)</function-call>` wrapper
-        into (tool, args). The model sometimes emits this instead of a
-        structured tool_calls response. Returns None if not a valid call."""
+        """Parse XML-ish tool call wrappers into (tool, args)."""
         if not content:
             return None
-        m = self._XML_CALL_RE.search(content)
+        m = self._XML_CALL_RE.search(content) or self._XML_CALL2_RE.search(content)
         if not m:
             return None
         body = m.group(1).strip()
-        # body may be "toolname(args)" or a JSON blob; reuse existing parsers
         inner = self._extract_text_tool_call(body)
         if inner:
             return inner
@@ -679,6 +830,21 @@ class Session:
                 args = data.get("args") or data.get("arguments") or {}
                 if isinstance(args, dict):
                     return tool_name, args
+        # Also accept array of commands with different formats
+        if isinstance(data, dict) and data.get("function") and data.get("arguments"):
+            fn = str(data["function"]).lower()
+            if fn in {t["function"]["name"] for t in self.tools}:
+                try:
+                    if isinstance(data["arguments"], str):
+                        a = json.loads(data["arguments"]) if data["arguments"].strip().startswith('{') else self._parse_text_args(data["arguments"])
+                    elif isinstance(data["arguments"], dict):
+                        a = data["arguments"]
+                    else:
+                        a = {}
+                    if isinstance(a, dict):
+                        return fn, a
+                except Exception:
+                    pass
         cmds = data.get("commands") or data.get("command")
         if not cmds:
             return None
@@ -710,6 +876,8 @@ class Session:
                 return self._exec_cd(args.get("path") or ".")
             if tool == "pwd":
                 return self._display_cwd()
+            if tool == "term":
+                return self._exec_term(args)
             # Resolve path/src/dst args against the session cwd.
             if tool in ("list", "read", "write", "append", "search", "delete",
                         "mkdir"):
@@ -722,6 +890,28 @@ class Session:
                     args["src"] = self.resolve_path(args["src"])
                 if args.get("dst"):
                     args["dst"] = self.resolve_path(args["dst"])
+            # spawn: if the app arg looks like a file path, resolve it
+            # against the session cwd so spawn runs .as files from anywhere
+            # (unifies spawn/run — spawn becomes THE way to run a program).
+            elif tool == "spawn":
+                app = args.get("app")
+                if app:
+                    resolved = self._resolve_spawn_app(str(app))
+                    if resolved != app:
+                        args = dict(args)
+                        args["app"] = resolved
+            # An app is data being interpreted, not a self-modifying agent.
+            # It may edit user documents, but rewriting its own source makes
+            # the current execution incoherent (and was observed live).
+            program_path = getattr(self, "_program_path", None)
+            if program_path and tool in ("write", "append", "delete"):
+                target = args.get("path")
+                if target:
+                    host_target = os.path.realpath(os.path.join(
+                        self.executor.jail, str(target).lstrip("/")))
+                    if host_target == program_path:
+                        return ("[refused] a running app cannot modify its "
+                                "own source; execute the loaded program")
             # run always executes inside the chrooted jail — never on the
             # host. There is no host shell to escape to (ascOS ships none).
             if tool == "run":
@@ -730,3 +920,52 @@ class Session:
             return self.executor.execute(tool, args, chrooted=self._chrooted)
         except Exception as e:
             return f"[error] {e}"
+
+    def _resolve_spawn_app(self, app):
+        """Resolve a spawn app argument. Installed-app names pass through to
+        the daemon registry; file paths (or names that exist as .as files in
+        the cwd/home) resolve to an absolute host path so spawn can run any
+        aiscript file from anywhere."""
+        looks_file = ("/" in app or app.startswith("~")
+                      or app.endswith((".as", ".ais", ".am", ".aconf")))
+        if not looks_file:
+            # Bare name: only treat as a file if it exists right here.
+            for e in (".as", ".ais"):
+                cand = os.path.join(self.executor.jail,
+                                    (self.cwd + "/" + app + e).lstrip("/"))
+                if os.path.isfile(cand):
+                    return cand
+            return app
+        target = self.resolve_path(app)          # jail-relative, cwd-aware
+        base = os.path.join(self.executor.jail, target.lstrip("/"))
+        for e in ("", ".as", ".ais", ".am", ".aconf"):
+            if os.path.isfile(base + e):
+                return base + e
+        # fall back to the raw string; the daemon registry may still know it
+        return app
+
+    def _exec_term(self, args):
+        """Run a virtual-terminal action (ComputerCraft term API). pull is
+        special: it blocks on the registered input handler so the app can
+        read keypresses from the user's terminal."""
+        from .term import TermState
+        action = str(args.get("action") or args.get("value") or "").lower()
+        if self._term is None:
+            self._term = TermState()
+        if action == "pull":
+            handler = self.executor.handlers.get("term_pull")
+            if not handler:
+                return json.dumps({"event": "none"})
+            try:
+                timeout = float(args.get("timeout") or 30)
+            except (TypeError, ValueError):
+                timeout = 30.0
+            ev = handler(args.get("filter"), timeout)
+            return json.dumps(ev if ev else {"event": "timeout"})
+        try:
+            result = self._term.do(action, args)
+        except ValueError as e:
+            return f"[term] {e}"
+        if action in TermState.MUTATING and self._loop_hook:
+            self._loop_hook({"type": "term", "frame": self._term.serialize()})
+        return result

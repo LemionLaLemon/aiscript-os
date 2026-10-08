@@ -1,0 +1,4 @@
+name = "tui"
+description = "terminal UI toolkit (ComputerCraft-style term API) — library, not an app"
+version = "1.0.0"
+entry = "tui.as"

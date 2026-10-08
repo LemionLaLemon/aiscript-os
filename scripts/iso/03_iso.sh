@@ -23,6 +23,10 @@ OPT="$R/opt/as-os"
 echo "==> populating /opt/as-os + /sbin/init..."
 rm -rf "$OPT"
 mkdir -p "$OPT/tools/llama.cpp" "$OPT/models" "$OPT/packages"
+# /data = mountpoint for the writable data partition. It must exist in the
+# image: the root squashfs is read-only, so init.sh's `mkdir -p /data` at
+# boot fails and every data mount (and seed, jail binds, engine.log) dies.
+mkdir -p "$R/data"
 
 # the OS init (switch_root execs /sbin/init inside the image)
 install -m 755 "$ROOT/scripts/iso/init.sh" "$R/sbin/init"

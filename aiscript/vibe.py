@@ -2,6 +2,7 @@ import os
 import re
 
 from daemon.tools import INTERPRETER_TOOLS
+from .runner import find_program_section
 
 VIBE_TASK = """-- START SYSTEM PROMPT --
 You are the vibecoder. Your mission: breathe life into a brand-new aiscript
@@ -102,18 +103,21 @@ def _validate_as_file(path):
     with open(path) as f:
         src = f.read()
 
-    # (a) must have a "# <name>:" header line
-    if not re.search(r'^#\s*\S+\s*:', src, re.MULTILINE):
-        return "missing the required '# <name>: description' header line"
-
-    # (b) must not be a stub: at least 3 non-empty lines, OR a program section
-    body = [ln for ln in src.splitlines() if ln.strip()]
-    has_program = "--- program ---" in src
-    if not has_program and len(body) < 3:
+    # The vibecoder should emit the canonical heading, but aiscript itself has
+    # no grammar. Accept clear natural variants such as "--- program start"
+    # rather than rejecting runnable intent over punctuation.
+    section = find_program_section(src)
+    if section is None:
         return (
-            "file is only a stub (a description with no body or program "
-            "section). Give it real content."
+            "missing a recognizable program section (for example "
+            "'--- program ---' or '--- program start')"
         )
+    preamble, program = section
+    if len(re.sub(r"[-#\s]", "", preamble)) < 5:
+        return "missing a meaningful program description"
+    program = program.strip()
+    if len(program) < 20:
+        return "the program section has no meaningful logic/assets"
     return None
 
 
@@ -163,9 +167,13 @@ def _install(daemon, pkgs, target, action, flags):
         max_tokens=4096, time_budget=300, layer="interpreter",
         tool_choice="required", cwd="",
     )
+    def sink(ev):
+        for cb in daemon.stream_out:
+            cb(("vibe", f"vibe:{target}"), ev)
     result = sub.user_turn(
         f"Vibecode the '{target}' package now. Write packages/{target}/"
-        f"{target}.as and packages/{target}/{target}.aconf."
+        f"{target}.as and packages/{target}/{target}.aconf.",
+        on_event=sink,
     )
     sub.reset()
 
@@ -263,7 +271,10 @@ def _retry_vibecode(daemon, sub, pkg_dir, target, result, err):
         f"with real logic/assets. Also ensure packages/{target}/{target}.aconf "
         f"exists. Do it now."
     )
-    result2 = sub2.user_turn(kick)
+    def sink(ev):
+        for cb in daemon.stream_out:
+            cb(("vibe", f"vibe:{target}-retry"), ev)
+    result2 = sub2.user_turn(kick, on_event=sink)
     sub2.reset()
     return result2
 

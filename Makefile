@@ -44,8 +44,11 @@ build/rootfs:
 
 squashfs: build/staging/boot/root.squashfs
 
-# squashfs — depends on the seed so /opt/as-os/seed is present in the image
-build/staging/boot/root.squashfs: build/rootfs build/seed scripts/iso/03_iso.sh
+# squashfs — depends on the seed (so /opt/as-os/seed is in the image), on
+# the staged initramfs (03_iso.sh packs it), and on init.sh (03 installs it
+# as /sbin/init — without this dep, init.sh edits never reach the image).
+build/staging/boot/root.squashfs: build/rootfs build/seed build/initramfs \
+                                  scripts/iso/03_iso.sh scripts/iso/init.sh
 	mkdir -p build/staging
 	$(SUDO) bash scripts/iso/03_iso.sh
 
@@ -53,9 +56,15 @@ build/staging/boot/root.squashfs: build/rootfs build/seed scripts/iso/03_iso.sh
 
 initramfs: build/staging/boot/initramfs.img
 
-build/staging/boot/initramfs.img: scripts/iso/02b_initramfs.sh \
-                                  scripts/iso/initramfs-init.sh
+# Stage the initramfs contents (busybox + init + kernel modules). This used
+# to be wired only into the initramfs.img rule, which make runs AFTER
+# root.squashfs — but 03_iso.sh (squashfs build) packs this directory, so
+# from a clean tree the squashfs build hit a missing build/initramfs.
+build/initramfs: build/rootfs scripts/iso/02b_initramfs.sh \
+                 scripts/iso/initramfs-init.sh
 	$(SUDO) bash scripts/iso/02b_initramfs.sh
+
+build/staging/boot/initramfs.img: build/initramfs
 	cd build/initramfs && find . | cpio -o -H newc 2>/dev/null | $(SUDO) tee build/staging/boot/initramfs.img > /dev/null
 
 # ---- kernel ------------------------------------------------------------------
